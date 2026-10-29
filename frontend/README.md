@@ -1,16 +1,19 @@
-# React + Vite
+# SOLARIS React dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Start the dashboard
 
-Currently, two official plugins are available:
+From this directory, run:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```sh
+npm install
+npm run dev
+```
 
-## React Compiler
+The Vite development server starts the local FastAPI backend automatically when it is not already running. It uses the project `.venv` or `venv` when available, otherwise `python` on Windows or `python3` on macOS/Linux. Open the URL printed by Vite (by default, `http://127.0.0.1:5173`). Stopping the Vite server also stops the backend it started.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Set `VITE_API_TARGET` to use an externally managed API instead; in that case Vite will not start a local backend.
 
-## Expanding the Oxlint configuration
+## Other commands
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+- `npm run build` creates the production frontend bundle.
+- `npm run lint` runs Oxlint.

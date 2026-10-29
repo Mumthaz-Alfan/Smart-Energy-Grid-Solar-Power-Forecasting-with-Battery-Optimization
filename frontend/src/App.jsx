@@ -43,7 +43,7 @@ export default function App() {
     },
   ]);
 
-  const [granularity, setGranularity] = useState('hourly');
+  const [granularity, setGranularity] = useState('15min_plant');
   const [overviewData, setOverviewData] = useState(null);
   const [forecastData, setForecastData] = useState(null);
   const [optData, setOptData] = useState(null);

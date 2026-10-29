@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sun, Zap, BatteryCharging, DollarSign, Leaf, CloudSun } from 'lucide-react';
+import { Sun, Activity, DollarSign, Leaf, CloudSun } from 'lucide-react';
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -51,11 +51,9 @@ export default function OverviewView({
 
   const { kpis, timeseries } = data;
   const optKpis = optData?.kpis || {};
-  const soc = optData?.soc_gauge || {};
   const schedule = optData?.schedule || [];
   const predictions = forecastData?.predictions || [];
 
-  const latestForecast = [...predictions].reverse().find((row) => row.lightgbm != null);
   const latestActual = timeseries?.length ? timeseries[timeseries.length - 1] : null;
   const nextAction = schedule.find((row) => row.charge_mw > 0.01 || row.discharge_mw > 0.01);
   const actionLabel = nextAction
@@ -69,7 +67,7 @@ export default function OverviewView({
       <PageHeader
         eyebrow="What you are looking at"
         title={plantInfo?.name || 'Solar plant overview'}
-        description="Measured generation, the latest forecast, battery state, and estimated savings from the current optimization run."
+        description="Measured generation, peak output, average power, and estimated savings from the current optimization run."
         actions={
           <FilterBar
             label="Time resolution"
@@ -100,24 +98,22 @@ export default function OverviewView({
           badge={{ label: 'Measured', tone: 'measured' }}
         />
         <MetricCard
-          label="Latest Recorded Forecast"
-          value={latestForecast?.lightgbm != null ? formatNumber(latestForecast.lightgbm, 0) : '—'}
+          label="Peak AC output"
+          value={formatNumber(kpis.peak_ac_kw, 1)}
           unit="kW"
-          subtitle={latestForecast?.time
-            ? `LightGBM at ${latestForecast.time}${Number(latestForecast.lightgbm) === 0 ? ' · Zero is expected after sunset.' : ''}`
-            : 'Forecast not loaded yet'}
-          icon={Zap}
-          tone="emerald"
-          badge={{ label: 'Historical Data — Not Live', tone: 'forecast' }}
+          subtitle="Maximum instantaneous measured output"
+          icon={Sun}
+          tone="amber"
+          badge={{ label: 'Measured', tone: 'measured' }}
         />
         <MetricCard
-          label="Battery state of charge"
-          value={soc.final_soc_pct != null ? formatNumber(soc.final_soc_pct, 1) : '—'}
-          unit="%"
-          subtitle={actionLabel}
-          icon={BatteryCharging}
-          tone="blue"
-          badge={{ label: 'Planned', tone: 'info' }}
+          label="Mean active power"
+          value={formatNumber(kpis.avg_ac_kw, 1)}
+          unit="kW"
+          subtitle="Time-averaged measured output"
+          icon={Activity}
+          tone="emerald"
+          badge={{ label: 'Measured', tone: 'measured' }}
         />
         <MetricCard
           label="Estimated cost savings"
