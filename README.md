@@ -250,7 +250,7 @@ cd ..
   cd frontend
   npm run dev
   ```
-  Open the URL printed by Vite, normally [http://127.0.0.1:5173](http://127.0.0.1:5173). No separate backend terminal is needed. To use an externally managed API, set `VITE_API_TARGET` before starting Vite.
+  Open the URL printed by Vite, normally [http://127.0.0.1:5173](http://127.0.0.1:5173). No separate backend terminal is needed; Vite restarts the local API if it stops and waits for it before proxying API requests. To use an externally managed API, set `VITE_API_TARGET` before starting Vite.
 
   The Overview defaults to plant-level 15-minute telemetry. Its capacity factor is calculated for the selected plant as average measured AC power divided by rated plant capacity; mean active power and solar generation also update with the selected plant and time resolution. These are historical telemetry measurements, not live readings.
 

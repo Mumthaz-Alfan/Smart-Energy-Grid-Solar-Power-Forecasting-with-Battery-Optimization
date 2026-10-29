@@ -13,7 +13,6 @@ import {
   MapPin,
   X,
 } from 'lucide-react';
-import { formatMoney } from './ui/chartTheme';
 
 export default function Sidebar({
   activeTab,
@@ -25,10 +24,8 @@ export default function Sidebar({
   setCollapsed,
   mobileOpen,
   setMobileOpen,
-  optData,
 }) {
   const currentPlant = plants.find((p) => p.id === plantId) || plants[0];
-  const kpis = optData?.kpis || {};
   const expanded = !collapsed || mobileOpen;
 
   const groups = [
@@ -172,28 +169,6 @@ export default function Sidebar({
           ))}
         </nav>
 
-        {expanded && (
-          <div className="p-4 mx-3 mb-4 rounded-xl bg-white/5 border border-white/10 text-[11px] text-slate-300">
-            <div className="flex items-center gap-1.5 mb-2 font-semibold text-slate-100">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              Latest optimization
-            </div>
-            <div className="flex justify-between">
-              <span>Estimated savings</span>
-              <span className="font-semibold text-emerald-300 tabular-nums">
-                {kpis.net_arbitrage_savings != null ? `$${formatMoney(kpis.net_arbitrage_savings)}` : '—'}
-              </span>
-            </div>
-            <div className="flex justify-between mt-1">
-              <span>Self-consumption</span>
-              <span className="font-semibold tabular-nums">
-                {kpis.solar_self_consumption_with_bess_pct != null
-                  ? `${Number(kpis.solar_self_consumption_with_bess_pct).toFixed(1)}%`
-                  : '—'}
-              </span>
-            </div>
-          </div>
-        )}
       </aside>
     </>
   );

@@ -183,7 +183,6 @@ export default function App() {
           setCollapsed={setSidebarCollapsed}
           mobileOpen={mobileSidebarOpen}
           setMobileOpen={setMobileSidebarOpen}
-          optData={optData}
         />
 
         <div
