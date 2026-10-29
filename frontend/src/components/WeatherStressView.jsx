@@ -6,7 +6,6 @@ import {
   TrendingDown,
   ShieldAlert,
   RefreshCw,
-  Info,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -28,12 +27,21 @@ import StatusBadge from './ui/StatusBadge';
 import { COLORS, tooltipStyle, axisProps, formatNumber } from './ui/chartTheme';
 
 const SCENARIO_LABELS = {
-  normal: 'Normal conditions',
-  heavy_cloud: 'Heavy cloud cover',
-  monsoon_prolonged: 'Monsoon conditions',
-  sudden_drop: 'Sudden solar drop',
-  multi_day_low: 'Multi-day low solar',
-  recovery: 'Weather recovery',
+  normal: 'Normal Weather',
+  heavy_cloud: 'Cloudy Weather',
+  monsoon_prolonged: 'Heavy Rain / Monsoon',
+  sudden_drop: 'Sudden Solar Drop',
+  multi_day_low: 'Low Sunlight for Several Days',
+  recovery: 'Weather Improving',
+};
+
+const SCENARIO_DESCRIPTIONS = {
+  normal: 'Normal sunny or partly cloudy conditions.',
+  heavy_cloud: 'Heavy clouds reduce solar power generation.',
+  monsoon_prolonged: 'Heavy rain and monsoon weather reduce solar power.',
+  sudden_drop: 'Solar power suddenly decreases due to bad weather.',
+  multi_day_low: 'Continuous cloudy weather reduces solar generation for days.',
+  recovery: 'Solar power gradually returns after bad weather.',
 };
 
 export default function WeatherStressView({ plantId = 1 }) {
@@ -103,7 +111,7 @@ export default function WeatherStressView({ plantId = 1 }) {
 
   const comparison = summary.map((row) => ({
     name: SCENARIO_LABELS[row.scenario_name] || row.scenario_label,
-    solar: Number(row.total_solar_generation_mwh),
+    solar: Number(row.total_solar_generation_7d_mwh),
     savings: Number(row.net_arbitrage_savings),
   }));
 
@@ -143,7 +151,7 @@ export default function WeatherStressView({ plantId = 1 }) {
             >
               {getScenarioIcon(sc.name)}
               <p className="text-xs font-semibold text-slate-900 mt-2">{SCENARIO_LABELS[sc.name] || sc.label}</p>
-              <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{sc.description}</p>
+              <p className="text-[11px] text-slate-500 mt-1">{SCENARIO_DESCRIPTIONS[sc.name] || sc.description}</p>
             </button>
           );
         })}
@@ -158,27 +166,27 @@ export default function WeatherStressView({ plantId = 1 }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard
-          label="Solar generation"
+          label="Solar generation (24h)"
           value={currentSummary.total_solar_generation_mwh != null ? formatNumber(currentSummary.total_solar_generation_mwh, 1) : '—'}
           unit="MWh"
-          subtitle={`Peak ${formatNumber(currentSummary.peak_actual_generation_kw, 0)} kW`}
+          subtitle={`7-day peak ${formatNumber(currentSummary.peak_actual_generation_kw, 0)} kW`}
           tone="amber"
         />
         <MetricCard
-          label="Net battery arbitrage"
+          label="Estimated 24-hour battery savings"
           value={currentSummary.net_arbitrage_savings != null ? `₹${formatNumber(currentSummary.net_arbitrage_savings, 0)}` : '—'}
           subtitle={`Throughput ${formatNumber(currentSummary.battery_throughput_mwh, 2)} MWh`}
           tone="emerald"
           badge={{ label: 'Estimated', tone: 'estimated' }}
         />
         <MetricCard
-          label="Grid dependency"
+          label="Grid dependence (24h)"
           value={currentSummary.grid_dependency_pct != null ? `${formatNumber(currentSummary.grid_dependency_pct, 1)}%` : '—'}
           subtitle={`Autonomy ${formatNumber(currentSummary.storage_autonomy_pct, 1)}%`}
           tone="orange"
         />
         <MetricCard
-          label="Forecast RMSE"
+          label="7-day daylight RMSE"
           value={currentSummary.lgb_daylight_rmse_kw != null ? formatNumber(currentSummary.lgb_daylight_rmse_kw, 1) : '—'}
           unit="kW"
           subtitle={`Ridge ${formatNumber(currentSummary.ridge_daylight_rmse_kw, 1)} kW`}
@@ -188,7 +196,7 @@ export default function WeatherStressView({ plantId = 1 }) {
 
       <ChartCard
         title="Baseline versus scenario"
-        description={`Normal generation ${formatNumber(baseline.total_solar_generation_mwh, 1)} MWh compared with each stress case. Values are produced by the existing weather-stress API.`}
+        description={`Normal 7-day generation ${formatNumber(baseline.total_solar_generation_7d_mwh, 1)} MWh compared with each stress case. Weather-stress values are simulated.`}
       >
         <div className="h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
@@ -214,13 +222,13 @@ export default function WeatherStressView({ plantId = 1 }) {
             <thead className="text-xs text-slate-500 border-b border-slate-200">
               <tr>
                 <th className="py-3 px-4">Scenario</th>
-                <th className="py-3 px-4">Solar (MWh)</th>
-                <th className="py-3 px-4">Peak (kW)</th>
-                <th className="py-3 px-4">Ridge RMSE</th>
-                <th className="py-3 px-4">LightGBM RMSE</th>
-                <th className="py-3 px-4">Arbitrage</th>
-                <th className="py-3 px-4">Grid dep.</th>
-                <th className="py-3 px-4">Autonomy</th>
+                <th className="py-3 px-4">Solar (7-day MWh)</th>
+                <th className="py-3 px-4">Peak (7-day kW)</th>
+                <th className="py-3 px-4">Ridge RMSE (7-day kW)</th>
+                <th className="py-3 px-4">LightGBM RMSE (7-day kW)</th>
+                <th className="py-3 px-4">Net savings (24h ₹)</th>
+                <th className="py-3 px-4">Grid dependence (24h)</th>
+                <th className="py-3 px-4">Autonomy (24h)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -238,7 +246,7 @@ export default function WeatherStressView({ plantId = 1 }) {
                         <span className="font-medium">{SCENARIO_LABELS[row.scenario_name] || row.scenario_label}</span>
                       </div>
                     </td>
-                    <td className="py-3 px-4 tabular-nums">{formatNumber(row.total_solar_generation_mwh, 1)}</td>
+                    <td className="py-3 px-4 tabular-nums">{formatNumber(row.total_solar_generation_7d_mwh, 1)}</td>
                     <td className="py-3 px-4 tabular-nums">{formatNumber(row.peak_actual_generation_kw, 0)}</td>
                     <td className="py-3 px-4 tabular-nums">{formatNumber(row.ridge_daylight_rmse_kw, 1)}</td>
                     <td className="py-3 px-4 tabular-nums text-emerald-700">{formatNumber(row.lgb_daylight_rmse_kw, 1)}</td>
@@ -250,10 +258,6 @@ export default function WeatherStressView({ plantId = 1 }) {
               })}
             </tbody>
           </table>
-        </div>
-        <div className="p-4 bg-slate-50 flex items-start gap-2 text-xs text-slate-500">
-          <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-          Night-time generation is held at zero in every scenario. Do not treat these cases as live weather observations.
         </div>
       </section>
     </div>

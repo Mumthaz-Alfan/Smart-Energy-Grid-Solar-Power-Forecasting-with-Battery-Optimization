@@ -40,56 +40,75 @@ from src.features.engineering import apply_nighttime_zero_inflation
 from src.models.baseline import temporal_train_test_split, LinearBaselinePipeline
 from src.models.forecasting import LightGBMForecaster
 from src.models.metrics import evaluate_forecast
-from src.optimization.battery_lp import BatterySpecs, TOUTariff, BatteryOptimizerLP
+from src.optimization.battery_lp import (
+    BatterySpecs,
+    TOUTariff,
+    BatteryOptimizerLP,
+    create_synthetic_load_profile,
+)
 
 ROOT_DIR = get_project_root()
+PLANT_RATED_CAPACITY_MW = {1: 29.5, 2: 26.2}
+
+
+def create_weather_stress_tariff() -> TOUTariff:
+    """Build the INR tariff represented in the Week 2 tariff matrix."""
+    return TOUTariff(
+        off_peak_rate=5.30,
+        normal_rate=6.70,
+        peak_rate=7.30,
+        export_feedin_rate=0.0,
+        off_peak_hours=(22, 23, 0, 1, 2, 3, 4, 5),
+        normal_hours=(10, 11, 12, 13, 14, 15, 16, 17),
+        peak_hours=(6, 7, 8, 9, 18, 19, 20, 21),
+    )
 
 
 # Scenario Definitions
 SCENARIOS = {
     "normal": {
-        "label": "Normal Baseline Conditions",
-        "description": "Historical measured clear/partly-cloudy diurnal irradiance profile.",
+        "label": "Normal Weather",
+        "description": "Measured baseline weather and solar generation.",
         "irradiance_factor": 1.0,
         "cloud_offset": 0.0,
         "temp_delta_c": 0.0,
         "is_synthetic": False
     },
     "heavy_cloud": {
-        "label": "Heavy Cloud Cover Overcast",
-        "description": "Persistent overcast stratocumulus layer reducing GHI by 50% with cloud cover index at 0.90.",
+        "label": "Cloudy Weather",
+        "description": "Synthetic scenario with solar irradiance reduced by 50% across the test period.",
         "irradiance_factor": 0.50,
         "cloud_offset": 0.50,
         "temp_delta_c": -2.0,
         "is_synthetic": True
     },
     "monsoon_prolonged": {
-        "label": "Monsoon Prolonged Low-Irradiance",
-        "description": "Severe tropical monsoon depression causing 75% irradiance attenuation and 4°C temperature drop.",
+        "label": "Heavy Rain / Monsoon",
+        "description": "Synthetic scenario with solar irradiance reduced by 75% and temperature lowered by 4°C.",
         "irradiance_factor": 0.25,
         "cloud_offset": 0.70,
         "temp_delta_c": -4.0,
         "is_synthetic": True
     },
     "sudden_drop": {
-        "label": "Sudden Midday Irradiance Drop",
-        "description": "Localized severe convective thundercloud passing directly over solar array between 11:00 and 14:00 (75% drop).",
+        "label": "Sudden Solar Drop",
+        "description": "Synthetic 75% solar drop from 11:00 to 14:00 on the first test day.",
         "irradiance_factor": 0.25,
         "cloud_offset": 0.75,
         "temp_delta_c": -3.0,
         "is_synthetic": True
     },
     "multi_day_low": {
-        "label": "Multi-Day Continuous Solar Deficit",
-        "description": "Extended 3-day atmospheric haze and low-pressure trough sustaining 60% irradiance suppression.",
+        "label": "Low Sunlight for Several Days",
+        "description": "Synthetic 60% solar reduction during the first 72 hours of the test period.",
         "irradiance_factor": 0.40,
         "cloud_offset": 0.45,
         "temp_delta_c": -2.5,
         "is_synthetic": True
     },
     "recovery": {
-        "label": "Post-Storm Rapid Solar Recovery",
-        "description": "Severe morning monsoon squall (80% drop until 11:00) followed by steep afternoon clear-sky ramp.",
+        "label": "Weather Improving",
+        "description": "Synthetic 80% solar drop through 11:00 on the first test day, followed by recovery.",
         "irradiance_factor": 0.20,
         "cloud_offset": 0.60,
         "temp_delta_c": -1.5,
@@ -125,21 +144,32 @@ def apply_weather_stress_scenario(
     else:
         hours = np.arange(len(df_stressed)) % 24
 
-    attenuation = np.full(len(df_stressed), factor, dtype=float)
+    if "time" in df_stressed.columns and len(df_stressed):
+        elapsed_hours = (
+            (df_stressed["time"] - df_stressed["time"].min()).dt.total_seconds().to_numpy() / 3600.0
+        )
+    else:
+        elapsed_hours = np.arange(len(df_stressed), dtype=float)
+
+    attenuation = np.ones(len(df_stressed), dtype=float)
 
     if scenario_name == "normal":
         attenuation[:] = 1.0
 
+    elif scenario_name in ("heavy_cloud", "monsoon_prolonged"):
+        attenuation[:] = factor
+
     elif scenario_name == "sudden_drop":
-        # Sudden drop applies only during peak daylight hours (11:00 - 14:00)
-        storm_mask = (hours >= 11) & (hours <= 14)
-        attenuation[:] = 1.0
+        # Model one localized midday event at the start of the test horizon.
+        storm_mask = (elapsed_hours < 24.0) & (hours >= 11) & (hours <= 14)
         attenuation[storm_mask] = factor
 
+    elif scenario_name == "multi_day_low":
+        attenuation[elapsed_hours < 72.0] = factor
+
     elif scenario_name == "recovery":
-        # Heavy suppression in morning (<= 11:00), recovering to clear-sky in afternoon
-        morning_mask = hours <= 11
-        attenuation[:] = 1.0
+        # Model one morning squall followed by clear conditions for the rest of the horizon.
+        morning_mask = (elapsed_hours < 24.0) & (hours <= 11)
         attenuation[morning_mask] = factor
 
     # Apply attenuation to solar generation & irradiance features
@@ -152,11 +182,44 @@ def apply_weather_stress_scenario(
         df_stressed["ghi_stressed"] = df_stressed["ghi"] * attenuation
     else:
         df_stressed["ghi_stressed"] = 0.0
+    for window, column in ((3, "ghi_rolling_mean_3h"), (6, "ghi_rolling_mean_6h")):
+        if column in df_stressed.columns:
+            if "time" in df_stressed.columns:
+                rolling_ghi = (
+                    df_stressed.groupby("time")["ghi_stressed"]
+                    .first()
+                    .rolling(window=window, min_periods=1)
+                    .mean()
+                )
+                df_stressed[column] = df_stressed["time"].map(rolling_ghi)
+            else:
+                df_stressed[column] = (
+                    pd.Series(df_stressed["ghi_stressed"])
+                    .rolling(window=window, min_periods=1)
+                    .mean()
+                    .to_numpy()
+                )
+    for column in ("direct_radiation", "dhi", "dni"):
+        if column in df_stressed.columns:
+            df_stressed[f"{column}_stressed"] = df_stressed[column] * attenuation
+
+    if "cloud_cover_index" in df_stressed.columns:
+        df_stressed["cloud_cover_index_stressed"] = np.clip(
+            df_stressed["cloud_cover_index"] + config["cloud_offset"] * 100.0 * (attenuation < 1.0),
+            0.0,
+            100.0,
+        )
 
     if "openmeteo_temperature" in df_stressed.columns:
-        df_stressed["temp_stressed"] = df_stressed["openmeteo_temperature"] + config["temp_delta_c"]
+        df_stressed["temp_stressed"] = (
+            df_stressed["openmeteo_temperature"]
+            + config["temp_delta_c"] * (attenuation < 1.0)
+        )
     elif "sensor_temperature" in df_stressed.columns:
-        df_stressed["temp_stressed"] = df_stressed["sensor_temperature"] + config["temp_delta_c"]
+        df_stressed["temp_stressed"] = (
+            df_stressed["sensor_temperature"]
+            + config["temp_delta_c"] * (attenuation < 1.0)
+        )
     else:
         df_stressed["temp_stressed"] = 25.0
 
@@ -186,6 +249,7 @@ def evaluate_forecasting_under_stress(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
     scenario_name: str,
+    plant_id: int = 1,
 ) -> Dict[str, Any]:
     """
     Evaluates LightGBM and Ridge Regression forecasters against a stressed weather scenario.
@@ -206,6 +270,10 @@ def evaluate_forecasting_under_stress(
     test_features = test_stressed.copy()
     if "ghi_stressed" in test_features.columns:
         test_features["ghi"] = test_features["ghi_stressed"]
+    for column in ("direct_radiation", "dhi", "dni", "cloud_cover_index"):
+        stressed_column = f"{column}_stressed"
+        if stressed_column in test_features.columns:
+            test_features[column] = test_features[stressed_column]
     if "temp_stressed" in test_features.columns and "openmeteo_temperature" in test_features.columns:
         test_features["openmeteo_temperature"] = test_features["temp_stressed"]
 
@@ -214,17 +282,31 @@ def evaluate_forecasting_under_stress(
     y_pred_ridge = ridge_pipeline.predict(test_features, enforce_night_zero=True)
     y_pred_lgb = lgb_model.predict(test_features, enforce_night_zero=True)
 
-    # Calculate metrics (daytime threshold > 10 kW)
-    is_day = y_true > 10.0
+    # Keep one measured-daylight mask across scenarios so RMSE values are comparable.
+    is_day = test_df["ac_power"].to_numpy() > 10.0
     metrics_ridge = evaluate_forecast(y_true, y_pred_ridge, is_daylight=is_day, daylight_mape_min_actual=50.0)
     metrics_lgb = evaluate_forecast(y_true, y_pred_lgb, is_daylight=is_day, daylight_mape_min_actual=50.0)
+    rated_capacity_mw = PLANT_RATED_CAPACITY_MW[plant_id]
+    peak_actual_generation_kw = float(np.max(y_true))
+    if peak_actual_generation_kw > rated_capacity_mw * 1000.0:
+        raise ValueError(
+            f"Plant {plant_id} scenario peak {peak_actual_generation_kw:.2f} kW exceeds "
+            f"its rated capacity of {rated_capacity_mw:.1f} MW."
+        )
 
     return {
+        "plant_id": plant_id,
+        "plant_rated_capacity_mw": rated_capacity_mw,
         "scenario_name": scenario_name,
         "scenario_label": SCENARIOS[scenario_name]["label"],
         "is_synthetic": SCENARIOS[scenario_name]["is_synthetic"],
         "mean_actual_generation_kw": round(float(np.mean(y_true)), 2),
-        "peak_actual_generation_kw": round(float(np.max(y_true)), 2),
+        "total_solar_generation_7d_mwh": round(float(np.sum(y_true)) / 1000.0, 2),
+        "peak_actual_generation_kw": round(peak_actual_generation_kw, 2),
+        "forecast_test_start": pd.Timestamp(test_df["time"].min()).strftime("%Y-%m-%d %H:%M"),
+        "forecast_test_end": pd.Timestamp(test_df["time"].max()).strftime("%Y-%m-%d %H:%M"),
+        "forecast_test_hours": int(len(y_true)),
+        "forecast_daylight_hours": int(np.sum(is_day)),
         "ridge_daylight_rmse_kw": round(float(metrics_ridge["daylight_rmse"]), 2),
         "ridge_daylight_mae_kw": round(float(metrics_ridge["daylight_mae"]), 2),
         "ridge_daylight_r2": round(float(metrics_ridge["daylight_r2"]), 4),
@@ -239,6 +321,7 @@ def evaluate_battery_resilience_under_stress(
     scenario_name: str,
     specs: Optional[BatterySpecs] = None,
     tariff: Optional[TOUTariff] = None,
+    load_kw: Optional[np.ndarray] = None,
 ) -> Dict[str, Any]:
     """
     Evaluates PuLP LP BESS storage dispatch resilience during stressed weather conditions.
@@ -251,10 +334,10 @@ def evaluate_battery_resilience_under_stress(
             soc_initial=0.20,
             soc_min=0.10,
             soc_max=0.90,
-            degradation_cost_per_kwh=0.005,
+            degradation_cost_per_kwh=0.50,
         )
     if tariff is None:
-        tariff = TOUTariff(off_peak_rate=0.05, normal_rate=0.10, peak_rate=0.25, export_feedin_rate=0.04)
+        tariff = create_weather_stress_tariff()
 
     # Apply stress
     stressed_day = apply_weather_stress_scenario(df_day, scenario_name=scenario_name)
@@ -265,6 +348,7 @@ def evaluate_battery_resilience_under_stress(
     optimizer = BatteryOptimizerLP(specs=specs, tariff=tariff)
     opt_res = optimizer.optimize_dispatch(
         solar_kw=solar_kw,
+        load_kw=load_kw,
         timestamps=timestamps,
         dt_hours=1.0,
         enforce_terminal_soc=True,
@@ -272,6 +356,8 @@ def evaluate_battery_resilience_under_stress(
 
     kpis = opt_res["kpi_summary"]
     sched_df = opt_res["schedule_df"]
+    if opt_res["solver_status"] != "Optimal":
+        raise RuntimeError(f"Battery resilience optimization failed: {opt_res['solver_status']}")
 
     # Calculate resilience indicators
     total_solar_kwh = float(np.sum(solar_kw))
@@ -295,6 +381,16 @@ def evaluate_battery_resilience_under_stress(
         "grid_import_without_bess_mwh": round(grid_import_baseline_kwh / 1000.0, 2),
         "grid_dependency_pct": round(grid_dependency_pct, 1),
         "storage_autonomy_pct": round(storage_autonomy_pct, 1),
+        "grid_dependency_definition": "grid imports / modeled facility demand",
+        "storage_autonomy_definition": "100% - grid dependency",
+        "battery_degradation_cost_per_kwh": specs.degradation_cost_per_kwh,
+        "battery_charge_efficiency_pct": specs.charge_efficiency * 100.0,
+        "battery_discharge_efficiency_pct": specs.discharge_efficiency * 100.0,
+        "tariff_off_peak_inr_per_kwh": tariff.off_peak_rate,
+        "tariff_normal_inr_per_kwh": tariff.normal_rate,
+        "tariff_peak_inr_per_kwh": tariff.peak_rate,
+        "tariff_export_inr_per_kwh": tariff.export_feedin_rate,
+        "tariff_source": "Week2_TOU_Tariff_Cost_Matrix_Plant1_Plant2_2020.csv",
         "peak_grid_import_mw": round(peak_grid_import_kw / 1000.0, 2),
         "cost_without_bess": round(float(kpis["cost_without_bess"]), 2),
         "cost_with_bess": round(float(kpis["cost_with_bess"]), 2),
@@ -317,26 +413,35 @@ def run_full_weather_stress_suite(plant_id: int = 1, save_artifacts: bool = True
     df_hourly = load_processed_handoff(plant_id=plant_id, freq="hourly")
     train_df, test_df = temporal_train_test_split(df_hourly, test_days=7)
     test_24h = test_df.tail(24).copy().reset_index(drop=True)
+    normal_solar_kw = apply_weather_stress_scenario(
+        test_24h, scenario_name="normal"
+    )["ac_power_stressed"].to_numpy()
+    common_load_kw = create_synthetic_load_profile(normal_solar_kw, test_24h["time"])
 
     forecast_results = []
     resilience_results = []
 
     for sc_name in SCENARIOS.keys():
         # 1. Forecasting stress
-        f_res = evaluate_forecasting_under_stress(train_df, test_df, sc_name)
+        f_res = evaluate_forecasting_under_stress(train_df, test_df, sc_name, plant_id=plant_id)
         forecast_results.append(f_res)
 
         # 2. Battery resilience stress
-        b_res = evaluate_battery_resilience_under_stress(test_24h, sc_name)
+        b_res = evaluate_battery_resilience_under_stress(test_24h, sc_name, load_kw=common_load_kw)
         # Store clean dictionary without DataFrame for tabular serialization
         b_dict = {k: v for k, v in b_res.items() if k != "schedule_df"}
+        b_dict["plant_id"] = plant_id
         resilience_results.append(b_dict)
 
     df_forecast = pd.DataFrame(forecast_results)
     df_resilience = pd.DataFrame(resilience_results)
 
     # Combined summary table
-    df_summary = pd.merge(df_forecast, df_resilience, on=["scenario_name", "scenario_label", "is_synthetic"])
+    df_summary = pd.merge(
+        df_forecast,
+        df_resilience,
+        on=["plant_id", "scenario_name", "scenario_label", "is_synthetic"],
+    )
 
     if save_artifacts:
         reports_dir = ROOT_DIR / "reports"

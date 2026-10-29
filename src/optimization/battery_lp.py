@@ -85,6 +85,25 @@ class TOUTariff:
         return import_rates, export_rates
 
 
+def create_synthetic_load_profile(
+    solar_kw: Union[np.ndarray, pd.Series],
+    timestamps: Optional[Union[np.ndarray, pd.Series]] = None,
+) -> np.ndarray:
+    """Create the modeled facility demand profile used when no measured load is available."""
+    solar = np.asarray(solar_kw, dtype=float)
+    if timestamps is not None:
+        time_index = pd.DatetimeIndex(timestamps)
+        if len(time_index) != len(solar):
+            raise ValueError("timestamps and solar_kw must have the same length.")
+        hours = time_index.hour + time_index.minute / 60.0
+    else:
+        hours = np.arange(len(solar)) % 24
+
+    mean_solar = max(100.0, np.mean(solar[solar > 0])) if np.any(solar > 0) else 1000.0
+    base_curve = 0.5 + 0.2 * np.sin((hours - 8) * np.pi / 12) + 0.4 * np.exp(-((hours - 19) ** 2) / 8.0)
+    return base_curve * mean_solar * 0.85
+
+
 class BatteryOptimizerLP:
     """
     Linear Programming (LP) Battery Arbitrage & Dispatch Optimizer.
@@ -159,16 +178,7 @@ class BatteryOptimizerLP:
         T = len(P_sol)
         
         if load_kw is None:
-            # Default realistic load curve scaled to plant size
-            mean_solar = max(100.0, np.mean(P_sol[P_sol > 0])) if np.any(P_sol > 0) else 1000.0
-            # Synthetic 24-hour diurnal profile with evening commercial/residential peak
-            if timestamps is not None:
-                time_index = pd.DatetimeIndex(timestamps)
-                hours = time_index.hour + time_index.minute / 60.0
-            else:
-                hours = np.arange(T) % 24
-            base_curve = 0.5 + 0.2 * np.sin((hours - 8) * np.pi / 12) + 0.4 * np.exp(-((hours - 19) ** 2) / 8.0)
-            P_load = base_curve * mean_solar * 0.85
+            P_load = create_synthetic_load_profile(P_sol, timestamps)
         else:
             P_load = np.asarray(load_kw, dtype=float)
 

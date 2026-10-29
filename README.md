@@ -308,6 +308,7 @@ df_hourly = load_processed_handoff(plant_id=1, freq="hourly")
 ### Currency & Tariff Assumptions
 - **Currency:** Financial arbitrage calculations and web controls are denominated in USD ($) by default (with an Indian Rupee ₹ matrix preserved in `data/processed/Week2_TOU_Tariff_Cost_Matrix_Plant1_Plant2_2020.csv`).
 - **TOU Assumptions:** Rates represent assumed benchmark commercial/industrial Time-of-Use tariffs (e.g. Peak: \$0.25/kWh from 17:00–21:00, Off-peak: \$0.05/kWh, Normal: \$0.10/kWh, Export: \$0.04/kWh), not actual plant billing records.
+- **Weather Scenario Exception:** Weather-stress battery estimates use the INR matrix rates (Off-peak ₹5.30 from 22:00–05:00, Normal ₹6.70 from 10:00–17:00, Peak ₹7.30 from 06:00–09:00 and 18:00–21:00 per kWh), 95% one-way charge and discharge efficiency, ₹0.50/kWh throughput degradation, and zero export credit because the matrix defines no export rate. Demand is modeled from the normal-scenario solar profile and held constant across weather cases. These are scenario estimates, not actual bills.
 - **Annualized Savings Disclaimer:** Annual savings figures are scenario-based projections calculated as $\text{Daily Net Savings} \times 365$; they represent 365-day cycling extrapolations rather than audited 12-month utility bill records.
 - **Negative Arbitrage Handling:** When battery degradation wear and round-trip efficiency losses exceed the tariff spread, the LP optimizer stays idle or reports negative arbitrage rather than forcing artificial positive savings.
 
@@ -363,14 +364,16 @@ Implemented in [`src/optimization/battery_lp.py`](src/optimization/battery_lp.py
 ### 1. Extreme-Weather Stress Testing Module
 Implemented in [`src/analysis/weather_stress_test.py`](src/analysis/weather_stress_test.py):
 Evaluates model forecast error degradation and PuLP battery storage resilience across six calibrated meteorological anomaly scenarios:
-1. **Normal Baseline:** Clear-sky summer conditions with unimpeded diurnal peak solar generation.
-2. **Heavy Cloud Cover:** 65% atmospheric attenuation ($0.35\times$ irradiance, $+0.60$ cloud cover, $-3^\circ\text{C}$ temperature).
-3. **Monsoon Prolonged Low-Irradiance:** 70% prolonged attenuation simulating continuous monsoon depression ($0.30\times$ irradiance, $-4^\circ\text{C}$).
-4. **Sudden Midday Irradiance Drop:** Localized convective thundercloud passing between 11:00 and 14:00 (75% drop).
-5. **Multi-Day Continuous Solar Deficit:** 3-day atmospheric haze sustaining 60% irradiance suppression ($0.40\times$ irradiance).
-6. **Post-Storm Rapid Recovery:** Heavy morning cloud suppression clearing rapidly to full clear-sky by 12:00.
+1. **Normal Baseline:** Measured baseline weather and solar generation.
+2. **Heavy Cloud Cover:** 50% solar irradiance reduction throughout the test period.
+3. **Monsoon Prolonged Low-Irradiance:** 75% solar irradiance reduction and a 4°C temperature decrease.
+4. **Sudden Midday Irradiance Drop:** One 75% drop from 11:00 to 14:00 on the first test day.
+5. **Multi-Day Continuous Solar Deficit:** 60% solar irradiance reduction over the first 72 hours.
+6. **Post-Storm Rapid Recovery:** 80% reduction through 11:00 on the first test day, then normal irradiance.
 
 **Physical Validation:** Strictly enforces astronomical night zero-inflation (when solar elevation $\le 0^\circ$ or GHI $\le 1.0\text{ W/m}^2$, output is clamped to $0.0\text{ kW}$).
+
+**Weather Dashboard Metric Definitions:** Solar generation, peak power, and Ridge/LightGBM daylight RMSE use the same seven-day test interval. The RMSE daylight mask is fixed from measured baseline output above 10 kW and reused for all scenarios; RMSE is in kW. The normal case uses measured telemetry; other weather cases are synthetic. Battery metrics are 24-hour optimization estimates using the fixed modeled-demand profile described above. Grid dependence is grid imports divided by modeled facility demand; autonomy is 100% minus grid dependence.
 
 ### 2. Operational Carbon-Offset Accounting & CEA Provenance
 Implemented in [`src/analysis/carbon_accounting.py`](src/analysis/carbon_accounting.py):

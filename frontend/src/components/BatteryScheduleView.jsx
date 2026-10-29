@@ -21,6 +21,12 @@ import LegendItem from './ui/LegendItem';
 import StatusBadge from './ui/StatusBadge';
 import { COLORS, axisProps, formatNumber, formatMoney } from './ui/chartTheme';
 
+const formatScheduleTime = (time) => {
+  const [hourText, minute] = time.split(':');
+  const hour = Number(hourText);
+  return `${hour % 12 || 12}:${minute} ${hour < 12 ? 'AM' : 'PM'}`;
+};
+
 export default function BatteryScheduleView({
   optData,
   params,
@@ -66,18 +72,6 @@ export default function BatteryScheduleView({
           message="The solver may be infeasible with the current constraints. Adjust capacity, power, or initial state of charge and run again."
           onRetry={onRunOptimization}
         />
-      )}
-
-      {optData?.data_source && (
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/60 rounded-xl text-xs text-emerald-900">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-semibold">{optData.data_source}</span>
-          </div>
-          <span className="text-[11px] text-emerald-700">
-            {optData.demand_assumption || 'Facility baseline demand is calibrated simulation scaled to plant capacity.'}
-          </span>
-        </div>
       )}
 
       <section className="surface-card p-5">
@@ -188,7 +182,7 @@ export default function BatteryScheduleView({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard
-          label="State of charge"
+          label="Battery Level"
           value={socGauge.final_soc_pct != null ? formatNumber(socGauge.final_soc_pct, 1) : '—'}
           unit="%"
           subtitle="End of the 24-hour schedule"
@@ -219,9 +213,11 @@ export default function BatteryScheduleView({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <section className="surface-card p-5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-900">State of charge</h3>
-            <StatusBadge tone="info">10%–90% operating band</StatusBadge>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-slate-900">Battery Level</h3>
+            <StatusBadge tone="info" className="whitespace-normal text-center">
+              Recommended Battery Range: 10%–90%
+            </StatusBadge>
           </div>
           <div className="flex items-center justify-center my-4">
             <div className="relative w-44 h-44 flex items-center justify-center">
@@ -241,17 +237,17 @@ export default function BatteryScheduleView({
               </svg>
               <div className="absolute text-center">
                 <p className="text-3xl font-semibold text-slate-900">{Number(currentSoc).toFixed(1)}%</p>
-                <p className="text-[11px] text-slate-500">End SoC</p>
+                <p className="text-[11px] text-slate-500">Final Battery Level</p>
               </div>
             </div>
           </div>
           <div className="space-y-2 text-xs text-slate-600">
             <div className="flex justify-between">
-              <span>Terminal SoC constraint</span>
+              <span>Final Battery Limit</span>
               <span className="inline-flex items-center gap-1 font-medium text-emerald-700">
                 {socGauge.terminal_condition_met !== false ? (
                   <>
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Met
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Satisfied
                   </>
                 ) : (
                   <>
@@ -261,10 +257,10 @@ export default function BatteryScheduleView({
               </span>
             </div>
             <div className="flex justify-between">
-              <span>Next action</span>
+              <span>Next Battery Action</span>
               <span className="font-medium text-slate-800">
                 {nextAction
-                  ? `${nextAction.charge_mw > 0.01 ? 'Charge' : 'Discharge'} at ${nextAction.hour}`
+                  ? `${nextAction.charge_mw > 0.01 ? 'Charge' : 'Discharge'} at ${formatScheduleTime(nextAction.hour)}`
                   : 'Idle'}
               </span>
             </div>
@@ -272,14 +268,14 @@ export default function BatteryScheduleView({
         </section>
 
         <section className="lg:col-span-2 surface-card p-5">
-          <h3 className="text-sm font-semibold text-slate-900">Operating assumptions</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Battery Safety Limits</h3>
           <p className="text-xs text-slate-500 mt-1 mb-4">
-            These limits come from the current run. They are not live field telemetry.
+            Battery limits for the current schedule.
           </p>
           <div className="relative w-full h-8 bg-slate-100 rounded-lg overflow-hidden flex text-[10px] font-medium">
-            <div className="w-[10%] bg-red-100 text-red-700 flex items-center justify-center">Lockout</div>
+            <div className="w-[10%] bg-red-100 text-red-700 flex items-center justify-center">Too Low</div>
             <div className="w-[80%] bg-emerald-50 text-slate-600 flex items-center justify-center relative">
-              Safe band 10%–90%
+              Safe Battery Level (10%–90%)
               {socGauge.min_soc_pct != null && socGauge.max_soc_pct != null && (
                 <div
                   className="absolute h-full bg-emerald-400/50"
@@ -290,19 +286,19 @@ export default function BatteryScheduleView({
                 />
               )}
             </div>
-            <div className="w-[10%] bg-red-100 text-red-700 flex items-center justify-center">Ceiling</div>
+            <div className="w-[10%] bg-red-100 text-red-700 flex items-center justify-center">Too High</div>
           </div>
           <div className="grid grid-cols-3 gap-3 mt-4 text-xs">
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-slate-500">Minimum SoC</p>
+              <p className="text-slate-500">Minimum Battery Level</p>
               <p className="text-lg font-semibold">{socGauge.min_soc_pct != null ? `${socGauge.min_soc_pct.toFixed(1)}%` : '—'}</p>
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-slate-500">Maximum SoC</p>
+              <p className="text-slate-500">Maximum Battery Level</p>
               <p className="text-lg font-semibold">{socGauge.max_soc_pct != null ? `${socGauge.max_soc_pct.toFixed(1)}%` : '—'}</p>
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-slate-500">Grid peak shaved</p>
+              <p className="text-slate-500">Reduction in Peak Grid Usage</p>
               <p className="text-lg font-semibold">{kpis.peak_shaving_percentage != null ? `${kpis.peak_shaving_percentage.toFixed(1)}%` : '—'}</p>
             </div>
           </div>

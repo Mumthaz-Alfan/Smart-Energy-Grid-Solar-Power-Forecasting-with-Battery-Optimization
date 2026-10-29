@@ -23,6 +23,7 @@ if str(root_dir) not in sys.path:
 from src.analysis.weather_stress_test import (
     SCENARIOS,
     apply_weather_stress_scenario,
+    create_weather_stress_tariff,
     run_full_weather_stress_suite,
 )
 from src.analysis.carbon_accounting import (
@@ -125,7 +126,7 @@ def test_weather_stress_night_zero_clamping():
 
 def test_weather_stress_suite_execution():
     """Verify full weather stress test execution produces valid metrics."""
-    res = run_full_weather_stress_suite(plant_id=1)
+    res = run_full_weather_stress_suite(plant_id=1, save_artifacts=False)
     assert "summary_df" in res
     assert "forecast_df" in res
     assert "resilience_df" in res
@@ -140,6 +141,90 @@ def test_weather_stress_suite_execution():
     normal_gen = df_sum[df_sum["scenario_name"] == "normal"]["total_solar_generation_mwh"].iloc[0]
     monsoon_gen = df_sum[df_sum["scenario_name"] == "monsoon_prolonged"]["total_solar_generation_mwh"].iloc[0]
     assert normal_gen > monsoon_gen
+
+    # Solar, peak, and RMSE share the same 7-day measured test window.
+    assert df_sum["forecast_test_hours"].nunique() == 1
+    assert df_sum["forecast_test_hours"].iloc[0] == 168
+    assert df_sum["forecast_daylight_hours"].nunique() == 1
+    assert df_sum["total_solar_generation_7d_mwh"].nunique() == 6
+    assert (df_sum["peak_actual_generation_kw"] <= df_sum["plant_rated_capacity_mw"] * 1000).all()
+
+    # All battery cases use the normal-scenario demand profile, not scenario-scaled demand.
+    assert df_sum["total_load_demand_mwh"].nunique() == 1
+    assert np.allclose(
+        df_sum["storage_autonomy_pct"],
+        100.0 - df_sum["grid_dependency_pct"],
+        atol=0.11,
+    )
+    assert np.allclose(
+        df_sum["net_arbitrage_savings"],
+        df_sum["cost_without_bess"] - df_sum["cost_with_bess"],
+        atol=0.02,
+    )
+    assert (df_sum["battery_degradation_cost_per_kwh"] == 0.50).all()
+    assert (df_sum["battery_charge_efficiency_pct"] == 95.0).all()
+    assert (df_sum["battery_discharge_efficiency_pct"] == 95.0).all()
+    assert (df_sum["tariff_off_peak_inr_per_kwh"] == 5.30).all()
+    assert (df_sum["tariff_normal_inr_per_kwh"] == 6.70).all()
+    assert (df_sum["tariff_peak_inr_per_kwh"] == 7.30).all()
+
+
+def test_weather_stress_adjusts_all_model_irradiance_inputs():
+    """Verify weather stress modifies the irradiance features used by the forecast models."""
+    df = pd.DataFrame({
+        "time": pd.date_range("2020-06-11 11:00:00", periods=2, freq="h"),
+        "ac_power": [1000.0, 1000.0],
+        "ghi": [800.0, 700.0],
+        "direct_radiation": [500.0, 400.0],
+        "dhi": [300.0, 300.0],
+        "dni": [600.0, 500.0],
+        "cloud_cover_index": [20.0, 30.0],
+        "openmeteo_temperature": [30.0, 30.0],
+    })
+
+    stressed = apply_weather_stress_scenario(df, "sudden_drop")
+    assert np.allclose(stressed["ac_power_stressed"], [250.0, 250.0])
+    for column in ("ghi", "direct_radiation", "dhi", "dni"):
+        assert np.allclose(stressed[f"{column}_stressed"], df[column] * 0.25)
+    assert np.allclose(stressed["cloud_cover_index_stressed"], [95.0, 100.0])
+
+
+def test_weather_events_apply_only_for_their_defined_periods():
+    times = pd.date_range("2020-06-11 00:00:00", periods=7 * 24, freq="h")
+    df = pd.DataFrame({
+        "time": times,
+        "ac_power": np.full(len(times), 1000.0),
+        "ghi": np.full(len(times), 800.0),
+        "openmeteo_temperature": np.full(len(times), 30.0),
+    })
+
+    sudden = apply_weather_stress_scenario(df, "sudden_drop")
+    assert sudden.loc[11, "ac_power_stressed"] == 250.0
+    assert sudden.loc[24 + 11, "ac_power_stressed"] == 1000.0
+
+    multi_day = apply_weather_stress_scenario(df, "multi_day_low")
+    assert multi_day.loc[71, "attenuation_factor"] == 0.40
+    assert multi_day.loc[72, "attenuation_factor"] == 1.0
+
+    recovery = apply_weather_stress_scenario(df, "recovery")
+    assert recovery.loc[11, "ac_power_stressed"] == 200.0
+    assert recovery.loc[12, "ac_power_stressed"] == 1000.0
+    assert recovery.loc[24 + 7, "ac_power_stressed"] == 1000.0
+
+
+def test_weather_stress_tariff_matches_inr_matrix():
+    tariff = create_weather_stress_tariff()
+    timestamps = pd.date_range("2020-05-15 00:00:00", periods=24, freq="h")
+    import_rates, _ = tariff.get_rates_for_series(timestamps)
+    expected_rates = np.array([
+        5.3, 5.3, 5.3, 5.3, 5.3, 5.3,
+        7.3, 7.3, 7.3, 7.3,
+        6.7, 6.7, 6.7, 6.7, 6.7, 6.7, 6.7, 6.7,
+        7.3, 7.3, 7.3, 7.3,
+        5.3, 5.3,
+    ])
+    assert np.array_equal(import_rates, expected_rates)
+    assert tariff.export_feedin_rate == 0.0
 
 
 # =========================================================================
@@ -237,6 +322,16 @@ def test_api_weather_stress_filter(client_w4):
     assert data["summary"][0]["scenario_name"] == "monsoon_prolonged"
 
 
+def test_api_weather_stress_uses_requested_plant_data(client_w4):
+    """Verify weather metrics are generated for the requested plant, not stale report files."""
+    data = client_w4.get("/api/weather-stress?plant_id=2").json()
+    assert data["plant_id"] == 2
+    assert data["rated_capacity_mw"] == 26.2
+    assert {row["plant_id"] for row in data["summary"]} == {2}
+    assert all(row["plant_rated_capacity_mw"] == 26.2 for row in data["summary"])
+    assert all(row["peak_actual_generation_kw"] <= 26200.0 for row in data["summary"])
+
+
 def test_api_carbon_accounting_endpoint(client_w4):
     """Verify GET /api/carbon returns provenance and sensitivity matrix."""
     res = client_w4.get("/api/carbon?plant_id=1")
@@ -247,6 +342,10 @@ def test_api_carbon_accounting_endpoint(client_w4):
     assert "provenance" in data
     assert "sensitivity_summary" in data
     assert len(data["sensitivity_summary"]) == 4
+    assert all(
+        row["total_solar_generation_mwh"] > 0
+        for row in data["weather_scenarios_carbon"]
+    )
 
 
 def test_api_carbon_accounting_custom_factor(client_w4):

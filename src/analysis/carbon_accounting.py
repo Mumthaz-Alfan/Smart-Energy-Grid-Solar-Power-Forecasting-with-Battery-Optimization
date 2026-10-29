@@ -180,6 +180,7 @@ def run_carbon_scenario_analysis(
             solar_exported_kwh=st_export,
             grid_emission_factor=0.716,
         )
+        c_st["total_solar_generation_mwh"] = round(st_solar / 1000.0, 2)
         c_st["scenario_name"] = sc_name
         c_st["scenario_label"] = sc_info["label"]
         c_st["is_synthetic"] = sc_info["is_synthetic"]

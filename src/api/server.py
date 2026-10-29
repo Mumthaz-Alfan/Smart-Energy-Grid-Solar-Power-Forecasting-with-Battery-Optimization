@@ -24,12 +24,20 @@ from src.data.loader import load_processed_handoff
 from src.data.weather_live import fetch_live_openmeteo_forecast
 from src.models.forecasting import generate_24h_ahead_solar_forecast
 from src.optimization.battery_lp import BatterySpecs, TOUTariff, BatteryOptimizerLP
-from src.analysis.weather_stress_test import SCENARIOS, run_full_weather_stress_suite
+from src.analysis.weather_stress_test import (
+    PLANT_RATED_CAPACITY_MW,
+    SCENARIOS,
+    run_full_weather_stress_suite,
+)
 from src.analysis.carbon_accounting import (
     GRID_EMISSION_PROVENANCE,
     run_carbon_scenario_analysis,
     calculate_carbon_offsets,
 )
+
+_WEATHER_STRESS_CACHE: Dict[int, Dict[str, Any]] = {}
+
+
 def generate_executive_pdf(*args, **kwargs):
     from src.visualization.executive_report import generate_executive_pdf as _generate
     return _generate(*args, **kwargs)
@@ -554,17 +562,16 @@ def get_weather_stress(
     if hasattr(scenario, "default"):
         scenario = scenario.default
 
-    reports_dir = ROOT_DIR / "reports"
-    summary_csv = reports_dir / "week4_weather_stress_summary.csv"
-    fc_csv = reports_dir / "week4_forecast_stress_metrics.csv"
-    batt_csv = reports_dir / "week4_battery_resilience.csv"
+    if plant_id not in _WEATHER_STRESS_CACHE:
+        _WEATHER_STRESS_CACHE[plant_id] = run_full_weather_stress_suite(
+            plant_id=plant_id,
+            save_artifacts=False,
+        )
 
-    if not summary_csv.exists() or not fc_csv.exists() or not batt_csv.exists():
-        run_full_weather_stress_suite(plant_id=plant_id)
-
-    df_summary = pd.read_csv(summary_csv)
-    df_fc = pd.read_csv(fc_csv)
-    df_batt = pd.read_csv(batt_csv)
+    result = _WEATHER_STRESS_CACHE[plant_id]
+    df_summary = result["summary_df"]
+    df_fc = result["forecast_df"]
+    df_batt = result["resilience_df"]
 
     if scenario:
         df_summary = df_summary[df_summary["scenario_name"] == scenario]
@@ -578,6 +585,7 @@ def get_weather_stress(
 
     return {
         "plant_id": plant_id,
+        "rated_capacity_mw": PLANT_RATED_CAPACITY_MW[plant_id],
         "scenarios_metadata": scenarios_meta,
         "selected_scenario": scenario,
         "summary": df_summary.to_dict(orient="records"),
@@ -603,19 +611,14 @@ def get_carbon_accounting(
     if hasattr(emission_factor, "default"):
         emission_factor = emission_factor.default
 
-    reports_dir = ROOT_DIR / "reports"
-    c_summary_csv = reports_dir / "week4_carbon_summary.csv"
-    c_scenarios_csv = reports_dir / "week4_carbon_scenarios.csv"
-
-    if not c_summary_csv.exists() or not c_scenarios_csv.exists():
-        run_carbon_scenario_analysis(plant_id=plant_id)
-
-    df_summary = pd.read_csv(c_summary_csv)
-    df_scenarios = pd.read_csv(c_scenarios_csv)
+    carbon_results = run_carbon_scenario_analysis(plant_id=plant_id, save_artifacts=False)
+    df_summary = carbon_results["sensitivity_df"]
+    df_scenarios = carbon_results["weather_scenarios_df"]
 
     custom_calc = None
     if emission_factor is not None:
         # Load sample battery dispatch to compute custom offset
+        reports_dir = ROOT_DIR / "reports"
         sample_batt_csv = reports_dir / "week4_battery_resilience.csv"
         if sample_batt_csv.exists():
             df_b = pd.read_csv(sample_batt_csv)
@@ -688,4 +691,3 @@ def download_executive_report_endpoint(
 dist_dir = ROOT_DIR / "frontend" / "dist"
 if dist_dir.exists():
     app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend")
-
