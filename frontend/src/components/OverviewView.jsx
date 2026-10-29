@@ -53,6 +53,9 @@ export default function OverviewView({
   const optKpis = optData?.kpis || {};
   const schedule = optData?.schedule || [];
   const predictions = forecastData?.predictions || [];
+  const capacityFactorPct = plantInfo?.rated_capacity_mw > 0
+    ? (kpis.avg_ac_kw / (plantInfo.rated_capacity_mw * 1000)) * 100
+    : null;
 
   const latestActual = timeseries?.length ? timeseries[timeseries.length - 1] : null;
   const nextAction = schedule.find((row) => row.charge_mw > 0.01 || row.discharge_mw > 0.01);
@@ -67,7 +70,7 @@ export default function OverviewView({
       <PageHeader
         eyebrow="What you are looking at"
         title={plantInfo?.name || 'Solar plant overview'}
-        description="Measured generation, peak output, average power, and estimated savings from the current optimization run."
+        description="Measured generation, plant capacity factor, average power, and estimated savings from the current optimization run."
         actions={
           <FilterBar
             label="Time resolution"
@@ -98,12 +101,12 @@ export default function OverviewView({
           badge={{ label: 'Measured', tone: 'measured' }}
         />
         <MetricCard
-          label="Peak AC output"
-          value={formatNumber(kpis.peak_ac_kw, 1)}
-          unit="kW"
-          subtitle="Maximum instantaneous measured output"
-          icon={Sun}
-          tone="amber"
+          label="Capacity factor"
+          value={capacityFactorPct != null ? formatNumber(capacityFactorPct, 1) : '—'}
+          unit="%"
+          subtitle="Average measured output vs. rated capacity"
+          icon={Activity}
+          tone="blue"
           badge={{ label: 'Measured', tone: 'measured' }}
         />
         <MetricCard
