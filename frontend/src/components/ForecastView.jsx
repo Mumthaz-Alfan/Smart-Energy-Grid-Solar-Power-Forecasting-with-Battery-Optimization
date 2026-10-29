@@ -11,19 +11,23 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
+import { Sun, CloudSun, Wind, Zap, CheckCircle2 } from 'lucide-react';
 import PageHeader from './ui/PageHeader';
+import MetricCard from './ui/MetricCard';
 import ChartCard from './ui/ChartCard';
 import FilterBar from './ui/FilterBar';
 import LoadingState from './ui/LoadingState';
 import EmptyState from './ui/EmptyState';
 import InfoTooltip from './ui/InfoTooltip';
 import StatusBadge from './ui/StatusBadge';
-import { COLORS, tooltipStyle, axisProps } from './ui/chartTheme';
+import { COLORS, tooltipStyle, axisProps, formatNumber } from './ui/chartTheme';
 
 export default function ForecastView({ data, loading }) {
+  const [forecastMode, setForecastMode] = useState('live24h');
   const [visibleModels, setVisibleModels] = useState({
     actual: true,
     lightgbm: true,
+    xgboost: true,
     prophet: true,
     ridge: false,
     persistence: false,
@@ -44,7 +48,14 @@ export default function ForecastView({ data, loading }) {
     );
   }
 
-  const { metrics = [], predictions = [], feature_importance = [], bounds_info } = data;
+  const {
+    metrics = [],
+    predictions = [],
+    feature_importance = [],
+    bounds_info,
+    live_24h_forecast,
+  } = data;
+
   const filteredPredictions = predictions.slice(-horizonLength);
   const hasActual = filteredPredictions.some((row) => row.actual != null && Number(row.actual) !== 0);
 
@@ -55,104 +66,266 @@ export default function ForecastView({ data, loading }) {
   const layers = [
     { key: 'actual', label: 'Measured generation', color: COLORS.actual },
     { key: 'lightgbm', label: 'LightGBM forecast', color: COLORS.lightgbm },
+    { key: 'xgboost', label: 'XGBoost forecast', color: COLORS.xgboost },
     { key: 'prophet', label: 'Prophet', color: COLORS.prophet },
     { key: 'ridge', label: 'Ridge', color: COLORS.ridge },
     { key: 'persistence', label: 'Persistence (24h lag)', color: COLORS.persistence },
     { key: 'bounds', label: '90% interval', color: COLORS.bounds },
   ];
 
+  const liveTimeline = live_24h_forecast?.timeline || [];
+  const liveKpis = live_24h_forecast?.kpis || {};
+  const isLiveActive = forecastMode === 'live24h' && liveTimeline.length > 0;
+
+  // Next upcoming day forecast data formatted for charts
+  const liveChartData = liveTimeline.map((step) => ({
+    time: step.time_label,
+    timestamp: step.timestamp,
+    lightgbm: step.lightgbm_kw,
+    xgboost: step.xgboost_kw,
+    prophet: step.prophet_kw,
+    selected: step.selected_solar_kw,
+    lower_bound: step.lower_bound_kw,
+    upper_bound: step.upper_bound_kw,
+    ghi: step.ghi_wm2,
+    temp: step.ambient_temp_c,
+    cloud: step.cloud_cover_pct,
+  }));
+
+  const activeWeatherData = liveChartData.find((d) => d.ghi > 0) || liveChartData[0] || {};
+
   return (
     <div className="page-stack">
       <PageHeader
         title="Solar generation forecast"
-        description="The chart shows predicted plant output in kW. Compare it with measured generation when observations exist for the selected window."
+        description="Day-ahead solar forecasting powered by live Open-Meteo weather inputs and benchmarked against LightGBM, XGBoost, and Prophet models."
         actions={
-          <FilterBar
-            label="Show"
-            value={horizonLength}
-            onChange={setHorizonLength}
-            options={[
-              { id: 24, label: '24 hours' },
-              { id: 48, label: '48 hours' },
-              { id: 96, label: '4 days' },
-            ]}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterBar
+              label="Mode"
+              value={forecastMode}
+              onChange={setForecastMode}
+              options={[
+                { id: 'live24h', label: 'Upcoming 24h (Live)' },
+                { id: 'benchmark', label: '7-Day Benchmark' },
+              ]}
+            />
+            {forecastMode === 'benchmark' && (
+              <FilterBar
+                label="Show"
+                value={horizonLength}
+                onChange={setHorizonLength}
+                options={[
+                  { id: 24, label: '24 hours' },
+                  { id: 48, label: '48 hours' },
+                  { id: 96, label: '4 days' },
+                ]}
+              />
+            )}
+          </div>
         }
       />
 
-      <div className="flex flex-wrap gap-2">
-        {layers.map((layer) => (
-          <button
-            key={layer.key}
-            type="button"
-            onClick={() => toggleModel(layer.key)}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
-              visibleModels[layer.key]
-                ? 'bg-white text-slate-800 border-slate-300'
-                : 'bg-slate-100 text-slate-400 border-transparent'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: layer.color }} />
-            {layer.label}
-          </button>
-        ))}
-      </div>
+      {/* Mode 1: Upcoming 24-Hour Live Weather Forecast */}
+      {isLiveActive && (
+        <section className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/60 rounded-xl text-xs text-emerald-900">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-semibold">
+                {live_24h_forecast.is_live_weather ? 'Live Weather Integration Active' : 'Offline Historical Weather Fallback'}
+              </span>
+              <span className="text-emerald-700">
+                · Source: {live_24h_forecast.data_source} ({live_24h_forecast.forecast_start} to {live_24h_forecast.forecast_end})
+              </span>
+            </div>
+            <span className="text-[11px] text-emerald-600">Updated: {live_24h_forecast.retrieved_at}</span>
+          </div>
 
-      {!hasActual && (
-        <p className="text-xs text-amber-800 bg-amber-50 rounded-xl px-3 py-2">
-          Measured generation is missing or zero for much of this window, so actual-versus-predicted comparison is limited.
-        </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricCard
+              label="24h Projected Energy"
+              value={formatNumber(liveKpis.total_predicted_energy_mwh, 2)}
+              unit="MWh"
+              subtitle={`Peak ${formatNumber(liveKpis.peak_predicted_kw, 0)} kW · ${liveKpis.daylight_hours || 11} daylight hrs`}
+              icon={Sun}
+              tone="amber"
+              badge={{ label: 'Day-Ahead', tone: 'success' }}
+            />
+            <MetricCard
+              label="Forecast Solar Irradiance"
+              value={formatNumber(activeWeatherData.ghi || 0, 0)}
+              unit="W/m²"
+              subtitle="Global horizontal irradiance (GHI)"
+              icon={CloudSun}
+              tone="orange"
+            />
+            <MetricCard
+              label="Ambient Temperature"
+              value={formatNumber(activeWeatherData.temp || 30, 1)}
+              unit="°C"
+              subtitle={`Cloud cover: ${Math.round(activeWeatherData.cloud || 0)}%`}
+              icon={Zap}
+              tone="blue"
+            />
+            <MetricCard
+              label="Primary Forecaster"
+              value="LightGBM"
+              unit="(GBDT)"
+              subtitle="90% uncertainty bound enforced"
+              icon={CheckCircle2}
+              tone="emerald"
+              badge={{ label: 'Champion', tone: 'success' }}
+            />
+          </div>
+
+          <ChartCard
+            title="Upcoming 24-Hour Day-Ahead Solar Forecast"
+            description="Operational day-ahead trajectory comparing LightGBM, XGBoost, and Prophet with physical zero night-time truncation."
+          >
+            <div className="h-96 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={liveChartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="time" {...axisProps} />
+                  <YAxis
+                    {...axisProps}
+                    axisLine={false}
+                    tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`}
+                    label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
+                  />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  <Area
+                    type="monotone"
+                    dataKey="upper_bound"
+                    stroke="none"
+                    fill={COLORS.bounds}
+                    fillOpacity={0.45}
+                    name="Upper bound (90%)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="lower_bound"
+                    stroke="none"
+                    fill="#ffffff"
+                    fillOpacity={1}
+                    name="Lower bound"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="lightgbm"
+                    name="LightGBM (kW)"
+                    stroke={COLORS.lightgbm}
+                    strokeWidth={2.4}
+                    dot={{ r: 3 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="xgboost"
+                    name="XGBoost (kW)"
+                    stroke={COLORS.xgboost}
+                    strokeWidth={2}
+                    strokeDasharray="4 4"
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="prophet"
+                    name="Prophet (kW)"
+                    stroke={COLORS.prophet}
+                    strokeWidth={1.8}
+                    strokeDasharray="3 3"
+                    dot={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </ChartCard>
+        </section>
       )}
 
-      <ChartCard
-        title="Forecast chart"
-        description={bounds_info?.methodology || 'Prediction interval with night-time output truncated at zero.'}
-      >
-        <div className="h-96 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={filteredPredictions} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-              <XAxis dataKey="time" {...axisProps} />
-              <YAxis
-                {...axisProps}
-                axisLine={false}
-                tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`}
-                label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
-              />
-              <Tooltip contentStyle={tooltipStyle} />
-              {visibleModels.bounds && (
-                <Area type="monotone" dataKey="upper_bound" stroke="none" fill={COLORS.bounds} fillOpacity={0.55} name="Upper bound (90%)" />
-              )}
-              {visibleModels.bounds && (
-                <Area type="monotone" dataKey="lower_bound" stroke="none" fill="#ffffff" fillOpacity={1} name="Lower bound" />
-              )}
-              {visibleModels.actual && (
-                <Line type="monotone" dataKey="actual" name="Measured (kW)" stroke={COLORS.actual} strokeWidth={2.4} dot={false} />
-              )}
-              {visibleModels.lightgbm && (
-                <Line type="monotone" dataKey="lightgbm" name="LightGBM (kW)" stroke={COLORS.lightgbm} strokeWidth={2} dot={false} />
-              )}
-              {visibleModels.prophet && (
-                <Line type="monotone" dataKey="prophet" name="Prophet (kW)" stroke={COLORS.prophet} strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
-              )}
-              {visibleModels.ridge && (
-                <Line type="monotone" dataKey="ridge" name="Ridge (kW)" stroke={COLORS.ridge} strokeWidth={1.5} strokeDasharray="3 3" dot={false} />
-              )}
-              {visibleModels.persistence && (
-                <Line type="monotone" dataKey="persistence" name="Persistence (kW)" stroke={COLORS.persistence} strokeWidth={1.2} strokeDasharray="2 2" dot={false} />
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      </ChartCard>
+      {/* Mode 2: Historical Out-of-Sample Benchmark */}
+      {(!isLiveActive || forecastMode === 'benchmark') && (
+        <section className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {layers.map((layer) => (
+              <button
+                key={layer.key}
+                type="button"
+                onClick={() => toggleModel(layer.key)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
+                  visibleModels[layer.key]
+                    ? 'bg-white text-slate-800 border-slate-300'
+                    : 'bg-slate-100 text-slate-400 border-transparent'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: layer.color }} />
+                {layer.label}
+              </button>
+            ))}
+          </div>
 
+          {!hasActual && (
+            <p className="text-xs text-amber-800 bg-amber-50 rounded-xl px-3 py-2">
+              Measured generation is zero or missing for parts of this horizon, so comparison is limited.
+            </p>
+          )}
+
+          <ChartCard
+            title="Out-of-Sample Model Benchmark Chart"
+            description={bounds_info?.methodology || 'Prediction interval with night-time output truncated at zero.'}
+          >
+            <div className="h-96 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={filteredPredictions} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="time" {...axisProps} />
+                  <YAxis
+                    {...axisProps}
+                    axisLine={false}
+                    tickFormatter={(v) => `${(v / 1000).toFixed(1)}k`}
+                    label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
+                  />
+                  <Tooltip contentStyle={tooltipStyle} />
+                  {visibleModels.bounds && (
+                    <Area type="monotone" dataKey="upper_bound" stroke="none" fill={COLORS.bounds} fillOpacity={0.55} name="Upper bound (90%)" />
+                  )}
+                  {visibleModels.bounds && (
+                    <Area type="monotone" dataKey="lower_bound" stroke="none" fill="#ffffff" fillOpacity={1} name="Lower bound" />
+                  )}
+                  {visibleModels.actual && (
+                    <Line type="monotone" dataKey="actual" name="Measured (kW)" stroke={COLORS.actual} strokeWidth={2.4} dot={false} />
+                  )}
+                  {visibleModels.lightgbm && (
+                    <Line type="monotone" dataKey="lightgbm" name="LightGBM (kW)" stroke={COLORS.lightgbm} strokeWidth={2} dot={false} />
+                  )}
+                  {visibleModels.xgboost && (
+                    <Line type="monotone" dataKey="xgboost" name="XGBoost (kW)" stroke={COLORS.xgboost} strokeWidth={1.8} dot={false} />
+                  )}
+                  {visibleModels.prophet && (
+                    <Line type="monotone" dataKey="prophet" name="Prophet (kW)" stroke={COLORS.prophet} strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                  )}
+                  {visibleModels.ridge && (
+                    <Line type="monotone" dataKey="ridge" name="Ridge (kW)" stroke={COLORS.ridge} strokeWidth={1.5} strokeDasharray="3 3" dot={false} />
+                  )}
+                  {visibleModels.persistence && (
+                    <Line type="monotone" dataKey="persistence" name="Persistence (kW)" stroke={COLORS.persistence} strokeWidth={1.2} strokeDasharray="2 2" dot={false} />
+                  )}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </ChartCard>
+        </section>
+      )}
+
+      {/* Model Benchmark Comparison Table (Required: LightGBM, XGBoost, Prophet, Baselines) */}
       <section className="surface-card p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Forecast error</h3>
-            <p className="text-xs text-slate-500">Metrics are computed on daytime hours only (GHI &gt; 0).</p>
+            <h3 className="text-sm font-semibold text-slate-900">Model Comparison Leaderboard</h3>
+            <p className="text-xs text-slate-500">Evaluated on chronological out-of-sample daylight hours (GHI &gt; 0) without data leakage.</p>
           </div>
-          <StatusBadge tone="measured">Validation set</StatusBadge>
+          <StatusBadge tone="measured">Evaluated</StatusBadge>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -161,37 +334,43 @@ export default function ForecastView({ data, loading }) {
                 <th className="py-2.5 pr-4 font-medium">Model</th>
                 <th className="py-2.5 pr-4 font-medium">
                   <span className="inline-flex items-center gap-1">
-                    RMSE
-                    <InfoTooltip label="Explain RMSE">Root mean square error in kW. Lower is better.</InfoTooltip>
+                    Daylight RMSE
+                    <InfoTooltip label="Explain RMSE">Daylight root mean square error (kW). Lower is better.</InfoTooltip>
                   </span>
                 </th>
                 <th className="py-2.5 pr-4 font-medium">
                   <span className="inline-flex items-center gap-1">
-                    MAPE
-                    <InfoTooltip label="Explain MAPE">Mean absolute percentage error. Lower is better.</InfoTooltip>
+                    Daylight MAPE
+                    <InfoTooltip label="Explain MAPE">Daylight mean absolute percentage error (%). Lower is better.</InfoTooltip>
                   </span>
                 </th>
-                <th className="py-2.5 pr-4 font-medium">MAE (kW)</th>
+                <th className="py-2.5 pr-4 font-medium">Daylight MAE (kW)</th>
                 <th className="py-2.5 pr-4 font-medium">
                   <span className="inline-flex items-center gap-1">
-                    R²
-                    <InfoTooltip label="Explain R2">Share of variance explained. Closer to 1 is better.</InfoTooltip>
+                    Daylight R²
+                    <InfoTooltip label="Explain R2">Share of daytime variance explained.</InfoTooltip>
                   </span>
                 </th>
-                <th className="py-2.5 pr-4 font-medium">nRMSE (%)</th>
+                <th className="py-2.5 pr-4 font-medium">Daylight nRMSE (%)</th>
                 <th className="py-2.5 font-medium">Overall RMSE (kW)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {metrics.map((m, idx) => {
-                const isHero = String(m.model).toLowerCase().includes('lightgbm');
+                const isSelected = String(m.model).toLowerCase().includes('lightgbm');
+                const isXGB = String(m.model).toLowerCase().includes('xgboost');
                 return (
-                  <tr key={idx} className={isHero ? 'bg-emerald-50/50' : ''}>
+                  <tr key={idx} className={isSelected ? 'bg-emerald-50/50' : (isXGB ? 'bg-orange-50/30' : '')}>
                     <td className="py-3 pr-4 font-medium text-slate-900">
                       {m.model}
-                      {isHero && (
+                      {isSelected && (
                         <StatusBadge tone="success" className="ml-2">
-                          Selected
+                          Primary
+                        </StatusBadge>
+                      )}
+                      {isXGB && (
+                        <StatusBadge tone="orange" className="ml-2">
+                          Evaluated
                         </StatusBadge>
                       )}
                     </td>
@@ -210,8 +389,8 @@ export default function ForecastView({ data, loading }) {
       </section>
 
       <ChartCard
-        title="What the selected model uses"
-        description="Relative importance of weather and lagged generation features in LightGBM."
+        title="Feature Importance Ranking"
+        description="Relative importance of weather and solar geometry features in LightGBM."
       >
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">

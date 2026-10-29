@@ -21,6 +21,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
 from src.data.loader import load_processed_handoff
+from src.data.weather_live import fetch_live_openmeteo_forecast
+from src.models.forecasting import generate_24h_ahead_solar_forecast
 from src.optimization.battery_lp import BatterySpecs, TOUTariff, BatteryOptimizerLP
 from src.analysis.weather_stress_test import SCENARIOS, run_full_weather_stress_suite
 from src.analysis.carbon_accounting import (
@@ -74,6 +76,8 @@ class OptimizationRequest(BaseModel):
     export_feedin_rate: float = Field(0.04, ge=0.0, le=0.5, description="Export feed-in tariff ($/kWh)")
     degradation_cost_per_kwh: float = Field(0.005, ge=0.0, le=0.05, description="Battery degradation wear ($/kWh)")
     installed_cost_per_kwh: float = Field(250.0, ge=50.0, le=800.0, description="Estimated battery CAPEX ($/kWh)")
+    use_forecast: bool = Field(True, description="Whether to optimize on upcoming 24-hour live weather forecast (True) or historical baseline slice (False)")
+
 
 
 # -------------------------------------------------------------------------
@@ -118,6 +122,34 @@ def get_plants():
             "data_span_days": 34
         }
     ]
+
+
+@app.get("/api/weather/live")
+def get_live_weather(
+    plant_id: int = Query(1, ge=1, le=2, description="Plant ID (1 or 2)")
+):
+    """
+    Returns live Open-Meteo weather forecast and current meteorological conditions
+    for the plant's geographic coordinates, with caching and historical fallback.
+    """
+    try:
+        return fetch_live_openmeteo_forecast(plant_id=plant_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch live weather: {str(exc)}")
+
+
+@app.get("/api/forecast/live-24h")
+def get_live_24h_forecast(
+    plant_id: int = Query(1, ge=1, le=2, description="Plant ID (1 or 2)")
+):
+    """
+    Generates genuine operational 24-hour ahead solar power forecast using live
+    Open-Meteo weather forecast variables, solar geometry, and pre-trained GBDT/Prophet models.
+    """
+    try:
+        return generate_24h_ahead_solar_forecast(plant_id=plant_id, horizon_hours=24)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate 24h solar forecast: {str(exc)}")
 
 
 @app.get("/api/overview")
@@ -239,6 +271,7 @@ def get_forecast(
             "time": row["time"].strftime("%m/%d %H:%M"),
             "actual": round(float(row.get("actual_ac_power", 0.0)), 1),
             "lightgbm": round(float(row.get("pred_lightgbm", 0.0)), 1),
+            "xgboost": round(float(row.get("pred_xgboost", row.get("pred_lightgbm", 0.0))), 1),
             "prophet": round(float(row.get("pred_prophet", 0.0)), 1),
             "ridge": round(float(row.get("pred_ridge", 0.0)), 1),
             "persistence": round(float(row.get("pred_persistence", 0.0)), 1),
@@ -257,11 +290,19 @@ def get_forecast(
                 "importance": int(row["importance"])
             })
 
+    # 4. Live 24-Hour Operational Forecast (Next 24h from Open-Meteo)
+    live_24h = None
+    try:
+        live_24h = generate_24h_ahead_solar_forecast(plant_id=plant_id, horizon_hours=24)
+    except Exception:
+        pass
+
     return {
         "plant_id": plant_id,
         "metrics": metrics_list,
         "predictions": predictions,
         "feature_importance": features,
+        "live_24h_forecast": live_24h,
         "bounds_info": {
             "confidence_level": "90%",
             "std_error_kw": round(daytime_std, 1),
@@ -276,15 +317,36 @@ def run_optimization(req: OptimizationRequest):
     Executes PuLP 24-Hour Linear Programming battery arbitrage and returns
     dispatch schedules, Duck Curve mitigation, State-of-Charge progression,
     and financial savings breakdown.
+    Can optimize on upcoming 24-hour solar forecast (req.use_forecast=True) or historical slice.
     """
-    # Load 24-hour test day from hourly plant dataset
-    try:
-        df_hourly = get_cached_dataset(req.plant_id, "hourly")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load hourly data: {str(e)}")
+    solar_kw_array = None
+    timestamps = None
+    data_source_description = "Upcoming 24-Hour Solar Forecast (Live Open-Meteo)"
+    is_future = True
 
-    day_slice = df_hourly.tail(24).copy().reset_index(drop=True)
-    timestamps = pd.to_datetime(day_slice["time"])
+    if req.use_forecast:
+        try:
+            fc = generate_24h_ahead_solar_forecast(plant_id=req.plant_id, horizon_hours=24)
+            timeline = fc.get("timeline", [])
+            if len(timeline) == 24:
+                solar_kw_array = np.array([float(step["selected_solar_kw"]) for step in timeline], dtype=float)
+                timestamps = pd.to_datetime([step["timestamp"] for step in timeline])
+                is_future = True
+                data_source_description = f"Upcoming 24-Hour Solar Forecast ({fc.get('data_source', 'Live Open-Meteo')})"
+        except Exception:
+            solar_kw_array = None
+
+    if solar_kw_array is None:
+        try:
+            df_hourly = get_cached_dataset(req.plant_id, "hourly")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to load hourly data: {str(e)}")
+
+        day_slice = df_hourly.tail(24).copy().reset_index(drop=True)
+        solar_kw_array = day_slice["ac_power"].values
+        timestamps = pd.to_datetime(day_slice["time"])
+        is_future = False
+        data_source_description = "Historical Hourly Generation (24-Hour Baseline Slice)"
 
     # Configure Battery Specs
     one_way_eff = float(np.sqrt(req.round_trip_efficiency_pct / 100.0))
@@ -312,7 +374,7 @@ def run_optimization(req: OptimizationRequest):
 
     optimizer = BatteryOptimizerLP(specs=specs, tariff=tariff)
     opt_res = optimizer.optimize_dispatch(
-        solar_kw=day_slice["ac_power"].values,
+        solar_kw=solar_kw_array,
         timestamps=timestamps,
         dt_hours=1.0,
         enforce_terminal_soc=True,
@@ -332,9 +394,13 @@ def run_optimization(req: OptimizationRequest):
     for idx, row in sched_df.iterrows():
         hour_int = int(row["step"])
         tier = "Peak" if hour_int in tariff.peak_hours else ("Off-Peak" if hour_int in tariff.off_peak_hours else "Normal")
+        t_obj = timestamps[idx] if idx < len(timestamps) else None
+        t_label = t_obj.strftime("%H:%M") if t_obj is not None else f"{hour_int:02d}:00"
+        t_iso = t_obj.strftime("%Y-%m-%d %H:%M") if t_obj is not None else ""
         schedule_rows.append({
-            "hour": f"{hour_int:02d}:00",
+            "hour": t_label,
             "step": hour_int,
+            "timestamp": t_iso,
             "tariff_rate": round(float(row["import_tariff"]), 3),
             "tariff_tier": tier,
             "solar_mw": round(float(row["solar_generation_kw"]) / 1000.0, 2),
@@ -355,6 +421,9 @@ def run_optimization(req: OptimizationRequest):
     return {
         "kpis": kpis,
         "schedule": schedule_rows,
+        "data_source": data_source_description,
+        "is_future_forecast": is_future,
+        "demand_assumption": "Facility baseline load demand is a calibrated synthetic scenario scaled to plant capacity; actual utility meter telemetry is unavailable.",
         "financials": {
             "daily_savings": daily_savings,
             "annual_savings_projected": annual_savings,
@@ -373,6 +442,7 @@ def run_optimization(req: OptimizationRequest):
             "terminal_condition_met": bool(final_soc >= (req.initial_soc_pct - 0.5))
         }
     }
+
 
 
 @app.get("/api/dataset")

@@ -17,6 +17,8 @@ if str(root_dir) not in sys.path:
     sys.path.append(str(root_dir))
 
 from src.data.loader import load_processed_handoff
+from src.data.weather_live import fetch_live_openmeteo_forecast
+from src.models.forecasting import generate_24h_ahead_solar_forecast
 from src.optimization.battery_lp import BatterySpecs, TOUTariff, BatteryOptimizerLP
 from src.analysis.weather_stress_test import SCENARIOS, run_full_weather_stress_suite
 from src.analysis.carbon_accounting import (
@@ -383,6 +385,17 @@ if df_raw_loaded is not None:
                     hovertemplate="%{x}<br>LightGBM: %{y:,.1f} kW<extra></extra>"
                 ))
 
+            # XGBoost (Week 2 GBDT)
+            if "pred_xgboost" in df_preds.columns:
+                fig_pred.add_trace(go.Scatter(
+                    x=df_preds["time"],
+                    y=df_preds["pred_xgboost"],
+                    mode="lines",
+                    name="XGBoost (GBDT)",
+                    line=dict(color="#f97316", width=1.8),
+                    hovertemplate="%{x}<br>XGBoost: %{y:,.1f} kW<extra></extra>"
+                ))
+
             # Ridge Regression (Week 1 Baseline)
             if "pred_ridge" in df_preds.columns:
                 fig_pred.add_trace(go.Scatter(
@@ -465,6 +478,101 @@ if df_raw_loaded is not None:
                 )
                 st.plotly_chart(fig_imp, use_container_width=True)
 
+        # ---------------------------------------------------------------------
+        # Live Open-Meteo Weather & Genuine 24-Hour Solar Forecast
+        # ---------------------------------------------------------------------
+        st.markdown("---")
+        st.markdown("#### 🛰️ Live Open-Meteo Weather & Genuine 24-Hour Solar Forecast")
+        st.caption(
+            "Real-time meteorological telemetry from Open-Meteo Weather API for configured plant coordinates. "
+            "Exogenous weather variables drive genuine upcoming 24-hour predictions across LightGBM, XGBoost, and Prophet."
+        )
+
+        try:
+            live_w = fetch_live_openmeteo_forecast(plant_id=plant_id)
+            cond = live_w.get("current_conditions", {})
+            w_source = live_w.get("data_source", "Open-Meteo")
+            is_live = live_w.get("is_live", False)
+            status_badge = "🟢 Live API Telemetry" if is_live else "🟡 Historical Fallback"
+
+            wcol1, wcol2, wcol3, wcol4 = st.columns(4)
+            with wcol1:
+                st.metric("Weather Feed", status_badge, help=w_source)
+            with wcol2:
+                st.metric("Ambient Temp", f"{cond.get('temperature_c', 0.0):.1f} °C", help=f"Recorded: {cond.get('time')}")
+            with wcol3:
+                st.metric("Solar GHI", f"{cond.get('ghi_wm2', 0.0):.1f} W/m²")
+            with wcol4:
+                st.metric("Cloud Cover", f"{cond.get('cloud_cover_pct', 0.0):.0f}%", help=f"Wind: {cond.get('wind_speed_kmh', 0.0):.1f} km/h")
+
+            live_fc = generate_24h_ahead_solar_forecast(plant_id=plant_id, horizon_hours=24)
+            tl = live_fc.get("timeline", [])
+            if tl:
+                df_tl = pd.DataFrame(tl)
+                df_tl["time_dt"] = pd.to_datetime(df_tl["timestamp"])
+
+                fig_future = go.Figure()
+                # 90% Uncertainty Bound Envelope
+                fig_future.add_trace(go.Scatter(
+                    x=df_tl["time_dt"],
+                    y=df_tl["upper_bound_kw"],
+                    mode="lines",
+                    line=dict(width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
+                ))
+                fig_future.add_trace(go.Scatter(
+                    x=df_tl["time_dt"],
+                    y=df_tl["lower_bound_kw"],
+                    mode="lines",
+                    line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(16, 185, 129, 0.15)",
+                    name="90% Confidence Interval",
+                    hoverinfo="skip"
+                ))
+                # Primary LightGBM Forecast
+                fig_future.add_trace(go.Scatter(
+                    x=df_tl["time_dt"],
+                    y=df_tl["lightgbm_kw"],
+                    mode="lines+markers",
+                    name="LightGBM (GBDT)",
+                    line=dict(color="#10b981", width=2.5),
+                    marker=dict(size=5),
+                    hovertemplate="%{x}<br>LightGBM: %{y:,.1f} kW<extra></extra>"
+                ))
+                # XGBoost
+                fig_future.add_trace(go.Scatter(
+                    x=df_tl["time_dt"],
+                    y=df_tl["xgboost_kw"],
+                    mode="lines",
+                    name="XGBoost (GBDT)",
+                    line=dict(color="#f97316", width=2.0, dash="dash"),
+                    hovertemplate="%{x}<br>XGBoost: %{y:,.1f} kW<extra></extra>"
+                ))
+                # Prophet
+                fig_future.add_trace(go.Scatter(
+                    x=df_tl["time_dt"],
+                    y=df_tl["prophet_kw"],
+                    mode="lines",
+                    name="Facebook Prophet",
+                    line=dict(color="#8b5cf6", width=1.5, dash="dot"),
+                    hovertemplate="%{x}<br>Prophet: %{y:,.1f} kW<extra></extra>"
+                ))
+                fig_future.update_layout(
+                    title=f"Upcoming 24-Hour Solar Generation Forecast ({live_fc.get('forecast_start')} to {live_fc.get('forecast_end')})",
+                    xaxis=dict(title="Future Timestamp (Asia/Kolkata)", type="date"),
+                    yaxis=dict(title="Forecast AC Power (kW)", gridcolor="#f1f5f9"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    template="plotly_white",
+                    height=360,
+                    margin=dict(l=40, r=40, t=40, b=40),
+                )
+                st.plotly_chart(fig_future, use_container_width=True)
+                st.info(f"💡 Forecast horizon totals: **{live_fc['kpis']['total_predicted_energy_mwh']:.2f} MWh** estimated generation with **{live_fc['kpis']['peak_predicted_kw']:,.1f} kW** peak output across **{live_fc['kpis']['daylight_hours']} daylight hours**.")
+        except Exception as e:
+            st.warning(f"Could not load live weather forecast: {e}")
+
     # -------------------------------------------------------------------------
     # TAB 3: PuLP Battery Arbitrage & Optimization (Week 2 Hero Tab)
     # -------------------------------------------------------------------------
@@ -475,9 +583,46 @@ if df_raw_loaded is not None:
             "Charges battery during low-tariff solar overgeneration hours and discharges during evening peak hours."
         )
         st.info(
-            "📌 **Assumptions & Disclaimers:** Baseline grid demand is a calibrated synthetic scenario scaled to plant capacity (actual utility telemetry unavailable). "
+            "📌 **Assumptions & Disclaimers:** Baseline facility demand is a calibrated synthetic scenario scaled to plant capacity (actual utility telemetry unavailable). "
             "TOU rates are representative benchmark assumptions ($/kWh or INR ₹ equivalent scenario), not actual plant billing records."
         )
+
+        # Dispatch Solar Profile Selection
+        st.markdown("##### ☀️ Solar Dispatch Source")
+        dispatch_mode = st.radio(
+            "Select Generation Input Profile for Optimization",
+            options=["Upcoming 24-Hour Solar Forecast (Live Open-Meteo)", "Historical Baseline Day (Last 24h Slice)"],
+            horizontal=True,
+            help="Choose whether to optimize day-ahead battery dispatch on live upcoming solar forecast or historical recorded generation."
+        )
+
+        use_future = "Upcoming 24-Hour" in dispatch_mode
+        day_slice_solar = None
+        day_slice_time = None
+        data_source_label = ""
+
+        if use_future:
+            try:
+                fc_data = generate_24h_ahead_solar_forecast(plant_id=plant_id, horizon_hours=24)
+                tl = fc_data.get("timeline", [])
+                if len(tl) == 24:
+                    day_slice_solar = np.array([float(s["selected_solar_kw"]) for s in tl], dtype=float)
+                    day_slice_time = pd.to_datetime([s["timestamp"] for s in tl])
+                    data_source_label = f"Upcoming 24-Hour Forecast ({fc_data.get('data_source', 'Live Open-Meteo')})"
+            except Exception as e:
+                st.warning(f"Failed to generate future forecast ({e}), falling back to historical baseline.")
+                use_future = False
+
+        if day_slice_solar is None:
+            df_hourly_all = get_data(plant_id, "hourly")
+            if df_hourly_all is not None:
+                day_slice = df_hourly_all.tail(24).copy().reset_index(drop=True)
+                day_slice_solar = day_slice["ac_power"].values
+                day_slice_time = pd.to_datetime(day_slice["time"])
+                data_source_label = "Historical Hourly Generation (24-Hour Baseline Slice)"
+
+        if day_slice_solar is not None:
+            st.caption(f"📅 Active dispatch horizon: **{data_source_label}** | Duration: 24 Hours")
 
         # Battery Configuration Controls
         bcol1, bcol2, bcol3, bcol4 = st.columns(4)
@@ -505,11 +650,7 @@ if df_raw_loaded is not None:
         with tcol4:
             export_rate = st.number_input("Grid Solar Export Feed-In ($/kWh)", min_value=0.00, max_value=0.30, value=0.04, step=0.01)
 
-        # Load 24h slice from hourly data for optimization
-        df_hourly_all = get_data(plant_id, "hourly")
-        if df_hourly_all is not None:
-            day_slice = df_hourly_all.tail(24).copy().reset_index(drop=True)
-            
+        if day_slice_solar is not None:
             # Setup optimizer
             b_specs = BatterySpecs(
                 capacity_kwh=batt_cap_kwh,
@@ -531,11 +672,12 @@ if df_raw_loaded is not None:
 
             b_optimizer = BatteryOptimizerLP(specs=b_specs, tariff=b_tariff)
             opt_res = b_optimizer.optimize_dispatch(
-                solar_kw=day_slice["ac_power"].values,
-                timestamps=day_slice["time"],
+                solar_kw=day_slice_solar,
+                timestamps=day_slice_time,
                 dt_hours=1.0,
                 enforce_terminal_soc=True,
             )
+
             kpis = opt_res["kpi_summary"]
             sched_df = opt_res["schedule_df"]
 

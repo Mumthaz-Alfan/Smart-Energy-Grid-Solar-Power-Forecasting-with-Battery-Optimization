@@ -105,3 +105,13 @@ def load_processed_handoff(plant_id: int = 1, freq: str = "15min") -> pd.DataFra
     if "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"])
     return df
+
+
+def fetch_live_weather(plant_id: int = 1, forecast_days: int = 2) -> dict:
+    """
+    Convenience wrapper to retrieve live Open-Meteo weather forecasts
+    for Plant 1 or Plant 2 with automatic fallback to historical CSV.
+    """
+    from src.data.weather_live import fetch_live_openmeteo_forecast
+    return fetch_live_openmeteo_forecast(plant_id=plant_id, forecast_days=forecast_days)
+

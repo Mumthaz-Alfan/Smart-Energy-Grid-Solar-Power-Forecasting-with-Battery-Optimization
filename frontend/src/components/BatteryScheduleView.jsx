@@ -68,8 +68,38 @@ export default function BatteryScheduleView({
         />
       )}
 
+      {optData?.data_source && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 p-3 bg-emerald-50/70 border border-emerald-200/60 rounded-xl text-xs text-emerald-900">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-semibold">{optData.data_source}</span>
+          </div>
+          <span className="text-[11px] text-emerald-700">
+            {optData.demand_assumption || 'Facility baseline demand is calibrated simulation scaled to plant capacity.'}
+          </span>
+        </div>
+      )}
+
       <section className="surface-card p-5">
-        <h3 className="text-sm font-semibold text-slate-900 mb-4">Battery settings</h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+          <h3 className="text-sm font-semibold text-slate-900">Battery settings</h3>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500">Solar Input:</span>
+            <button
+              type="button"
+              onClick={() => {
+                setParams((prev) => ({ ...prev, use_forecast: prev.use_forecast === false ? true : false }));
+              }}
+              className={`px-2.5 py-1 rounded-lg font-medium border transition-colors ${
+                params.use_forecast !== false
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-slate-100 text-slate-700 border-slate-200'
+              }`}
+            >
+              {params.use_forecast !== false ? 'Upcoming 24h Forecast (Live)' : 'Historical 24h Baseline'}
+            </button>
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 text-sm">
           {[
             {

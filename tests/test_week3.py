@@ -23,6 +23,8 @@ from src.api.server import (
     get_plants,
     get_overview,
     get_forecast,
+    get_live_weather,
+    get_live_24h_forecast,
     run_optimization,
     get_dataset_sample,
     get_duck_curve,
@@ -56,6 +58,12 @@ class DirectAPIClient:
             return DirectTestResponse(200, get_status())
         elif path == "/api/plants":
             return DirectTestResponse(200, get_plants())
+        elif path == "/api/weather/live":
+            pid = int(qs.get("plant_id", [1])[0])
+            return DirectTestResponse(200, get_live_weather(plant_id=pid))
+        elif path == "/api/forecast/live-24h":
+            pid = int(qs.get("plant_id", [1])[0])
+            return DirectTestResponse(200, get_live_24h_forecast(plant_id=pid))
         elif path == "/api/overview":
             pid = int(qs.get("plant_id", [1])[0])
             gran = qs.get("granularity", ["hourly"])[0]
@@ -225,6 +233,51 @@ def test_api_optimization_flat_tariff_idle(client):
     assert data["financials"]["daily_savings"] >= -1e-4
 
 
+def test_api_live_weather(client):
+    for pid in [1, 2]:
+        res = client.get(f"/api/weather/live?plant_id={pid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["plant_id"] == pid
+        assert data["status"] in ["online", "fallback"]
+        assert "current_conditions" in data
+        assert len(data["hourly_forecast"]) > 0
+
+
+def test_api_live_24h_forecast(client):
+    for pid in [1, 2]:
+        res = client.get(f"/api/forecast/live-24h?plant_id={pid}")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["plant_id"] == pid
+        assert data["is_future_forecast"] is True
+        assert len(data["timeline"]) == 24
+        assert data["kpis"]["peak_predicted_kw"] >= 0.0
+
+
+def test_optimization_with_future_forecast(client):
+    payload = {
+        "plant_id": 1,
+        "battery_capacity_mwh": 10.0,
+        "max_inverter_power_mw": 5.0,
+        "round_trip_efficiency_pct": 90.25,
+        "initial_soc_pct": 20.0,
+        "off_peak_rate": 0.05,
+        "normal_rate": 0.10,
+        "peak_rate": 0.25,
+        "export_feedin_rate": 0.04,
+        "degradation_cost_per_kwh": 0.005,
+        "use_forecast": True
+    }
+    res = client.post("/api/optimize", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["kpis"]["solver_status"] == "Optimal"
+    assert data["is_future_forecast"] is True
+    assert len(data["schedule"]) == 24
+    assert "demand_assumption" in data
+
+
 def test_react_frontend_served(client):
     res = client.get("/")
     assert res.status_code == 200
@@ -238,6 +291,10 @@ if __name__ == "__main__":
     print("[OK] test_api_status passed.")
     test_api_plants(test_client)
     print("[OK] test_api_plants passed.")
+    test_api_live_weather(test_client)
+    print("[OK] test_api_live_weather passed.")
+    test_api_live_24h_forecast(test_client)
+    print("[OK] test_api_live_24h_forecast passed.")
     test_api_overview(test_client)
     print("[OK] test_api_overview passed.")
     test_api_forecast_with_bounds(test_client)
@@ -246,8 +303,11 @@ if __name__ == "__main__":
     print("[OK] test_api_duck_curve passed.")
     test_api_optimization(test_client)
     print("[OK] test_api_optimization passed.")
+    test_optimization_with_future_forecast(test_client)
+    print("[OK] test_optimization_with_future_forecast passed.")
     test_api_optimization_flat_tariff_idle(test_client)
     print("[OK] test_api_optimization_flat_tariff_idle passed.")
     test_react_frontend_served(test_client)
     print("[OK] test_react_frontend_served passed.")
     print("All Week 3 unit tests passed successfully! [OK]")
+

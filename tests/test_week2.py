@@ -15,7 +15,12 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.append(str(root_dir))
 
-from src.models.forecasting import LightGBMForecaster, ProphetForecaster
+from src.models.forecasting import (
+    LightGBMForecaster,
+    ProphetForecaster,
+    XGBoostForecaster,
+    generate_24h_ahead_solar_forecast,
+)
 from src.optimization.battery_lp import BatterySpecs, TOUTariff, BatteryOptimizerLP
 
 
@@ -64,6 +69,50 @@ def test_lightgbm_forecaster():
     if len(night_indices) > 0:
         assert np.all(preds[night_indices] == 0.0), "Nighttime predictions must be zero"
     print("[OK] LightGBM forecaster passed.")
+
+
+def test_xgboost_forecaster():
+    print("Testing XGBoost Forecaster...")
+    sample_solar_df = get_sample_solar_df()
+    train_df = sample_solar_df.iloc[:36].copy()
+    test_df = sample_solar_df.iloc[36:].copy()
+
+    forecaster = XGBoostForecaster(
+        feature_cols=["ghi", "openmeteo_temperature", "cos_zenith", "hour_sin", "hour_cos"],
+        target_col="ac_power",
+        n_estimators=50,
+        max_depth=4,
+    )
+    forecaster.fit(train_df)
+    assert forecaster.is_fitted, "XGBoost forecaster should be fitted"
+
+    preds = forecaster.predict(test_df, enforce_night_zero=True)
+    assert len(preds) == len(test_df), f"Expected {len(test_df)} predictions, got {len(preds)}"
+    assert np.all(preds >= 0.0), "Predictions must not be negative"
+
+    # Nighttime zero-inflation check
+    night_indices = np.where(test_df["cos_zenith"] <= 0)[0]
+    if len(night_indices) > 0:
+        assert np.all(preds[night_indices] == 0.0), "Nighttime predictions must be zero"
+    print("[OK] XGBoost forecaster passed.")
+
+
+def test_genuine_24h_ahead_solar_forecast():
+    print("Testing Genuine 24-Hour Ahead Solar Forecast...")
+    for pid in [1, 2]:
+        res = generate_24h_ahead_solar_forecast(plant_id=pid, horizon_hours=24)
+        assert res["status"] == "success"
+        assert res["is_future_forecast"] is True
+        assert len(res["timeline"]) == 24
+        assert res["kpis"]["peak_predicted_kw"] >= 0.0
+        assert "LightGBM" in res["model_champion"]
+        # Check non-negative and nighttime zero
+        for step in res["timeline"]:
+            assert step["selected_solar_kw"] >= 0.0
+            if not step["is_daylight"]:
+                assert step["selected_solar_kw"] == 0.0
+    print("[OK] Genuine 24-hour ahead solar forecast passed.")
+
 
 
 def test_prophet_forecaster():
@@ -160,6 +209,8 @@ if __name__ == "__main__":
     print("[INFO] RUNNING WEEK 2 UNIT TESTS")
     print("=" * 60)
     test_lightgbm_forecaster()
+    test_xgboost_forecaster()
+    test_genuine_24h_ahead_solar_forecast()
     test_pulp_battery_optimization()
     test_battery_negative_savings_handling()
     print("=" * 60)

@@ -13,6 +13,7 @@ export const COLORS = {
   ambientTemp: '#2563eb',
   actual: 'var(--chart-actual)',
   lightgbm: '#059669',
+  xgboost: '#f97316',
   prophet: '#7c3aed',
   ridge: '#2563eb',
   persistence: '#64748b',
