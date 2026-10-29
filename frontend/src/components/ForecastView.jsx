@@ -7,6 +7,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  Legend,
   CartesianGrid,
   BarChart,
   Bar,
@@ -63,13 +64,31 @@ export default function ForecastView({ data, loading }) {
     setVisibleModels((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const toggleLeaderboardModel = (key) => {
+    setVisibleModels((prev) => ({
+      ...prev,
+      [key]: forecastMode === 'benchmark' ? !prev[key] : true,
+    }));
+    setForecastMode('benchmark');
+  };
+
+  const getModelKey = (modelName) => {
+    const name = String(modelName).toLowerCase();
+    if (name.includes('lightgbm')) return 'lightgbm';
+    if (name.includes('xgboost')) return 'xgboost';
+    if (name.includes('prophet')) return 'prophet';
+    if (name.includes('ridge')) return 'ridge';
+    if (name.includes('persistence')) return 'persistence';
+    return null;
+  };
+
   const layers = [
     { key: 'actual', label: 'Measured generation', color: COLORS.actual },
     { key: 'lightgbm', label: 'LightGBM forecast', color: COLORS.lightgbm },
     { key: 'xgboost', label: 'XGBoost forecast', color: COLORS.xgboost },
     { key: 'prophet', label: 'Prophet', color: COLORS.prophet },
-    { key: 'ridge', label: 'Ridge', color: COLORS.ridge },
-    { key: 'persistence', label: 'Persistence (24h lag)', color: COLORS.persistence },
+    { key: 'ridge', label: 'Ridge Regression', color: COLORS.ridge },
+    { key: 'persistence', label: 'Persistence', color: COLORS.persistence },
     { key: 'bounds', label: '90% interval', color: COLORS.bounds },
   ];
 
@@ -195,6 +214,7 @@ export default function ForecastView({ data, loading }) {
                     label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
                   />
                   <Tooltip contentStyle={tooltipStyle} />
+                  <Legend />
                   <Area
                     type="monotone"
                     dataKey="upper_bound"
@@ -211,32 +231,38 @@ export default function ForecastView({ data, loading }) {
                     fillOpacity={1}
                     name="Lower bound"
                   />
-                  <Line
-                    type="monotone"
-                    dataKey="lightgbm"
-                    name="LightGBM (kW)"
-                    stroke={COLORS.lightgbm}
-                    strokeWidth={2.4}
-                    dot={{ r: 3 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="xgboost"
-                    name="XGBoost (kW)"
-                    stroke={COLORS.xgboost}
-                    strokeWidth={2}
-                    strokeDasharray="4 4"
-                    dot={false}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="prophet"
-                    name="Prophet (kW)"
-                    stroke={COLORS.prophet}
-                    strokeWidth={1.8}
-                    strokeDasharray="3 3"
-                    dot={false}
-                  />
+                  {visibleModels.lightgbm && (
+                    <Line
+                      type="monotone"
+                      dataKey="lightgbm"
+                      name="LightGBM (kW)"
+                      stroke={COLORS.lightgbm}
+                      strokeWidth={2.4}
+                      dot={{ r: 3 }}
+                    />
+                  )}
+                  {visibleModels.xgboost && (
+                    <Line
+                      type="monotone"
+                      dataKey="xgboost"
+                      name="XGBoost (kW)"
+                      stroke={COLORS.xgboost}
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
+                      dot={false}
+                    />
+                  )}
+                  {visibleModels.prophet && (
+                    <Line
+                      type="monotone"
+                      dataKey="prophet"
+                      name="Prophet (kW)"
+                      stroke={COLORS.prophet}
+                      strokeWidth={1.8}
+                      strokeDasharray="3 3"
+                      dot={false}
+                    />
+                  )}
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -287,6 +313,7 @@ export default function ForecastView({ data, loading }) {
                     label={{ value: 'kW', angle: -90, position: 'insideLeft', fill: '#64748b', fontSize: 11 }}
                   />
                   <Tooltip contentStyle={tooltipStyle} />
+                  <Legend />
                   {visibleModels.bounds && (
                     <Area type="monotone" dataKey="upper_bound" stroke="none" fill={COLORS.bounds} fillOpacity={0.55} name="Upper bound (90%)" />
                   )}
@@ -323,7 +350,9 @@ export default function ForecastView({ data, loading }) {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Model Comparison Leaderboard</h3>
-            <p className="text-xs text-slate-500">Evaluated on chronological out-of-sample daylight hours (GHI &gt; 0) without data leakage.</p>
+            <p className="text-xs text-slate-500">
+              Select one or more model names to show their actual out-of-sample forecasts on the chart. Metrics use chronological daylight hours (GHI &gt; 0).
+            </p>
           </div>
           <StatusBadge tone="measured">Evaluated</StatusBadge>
         </div>
@@ -357,12 +386,36 @@ export default function ForecastView({ data, loading }) {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {metrics.map((m, idx) => {
+                const modelKey = getModelKey(m.model);
                 const isSelected = String(m.model).toLowerCase().includes('lightgbm');
                 const isXGB = String(m.model).toLowerCase().includes('xgboost');
+                const isVisible = modelKey ? visibleModels[modelKey] : false;
                 return (
-                  <tr key={idx} className={isSelected ? 'bg-emerald-50/50' : (isXGB ? 'bg-orange-50/30' : '')}>
+                  <tr
+                    key={idx}
+                    className={`${isVisible ? 'bg-slate-50' : ''} ${isSelected ? 'border-l-2 border-l-emerald-500' : (isXGB ? 'border-l-2 border-l-orange-400' : '')}`}
+                  >
                     <td className="py-3 pr-4 font-medium text-slate-900">
-                      {m.model}
+                      {modelKey ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleLeaderboardModel(modelKey)}
+                          aria-pressed={isVisible}
+                          className="inline-flex items-center gap-2 rounded text-left hover:text-emerald-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600"
+                          title={`${isVisible ? 'Remove' : 'Show'} ${m.model} forecast on the chart`}
+                        >
+                          <span
+                            className={`inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
+                              isVisible ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-slate-300 text-transparent'
+                            }`}
+                            aria-hidden="true"
+                          >
+                            ✓
+                          </span>
+                          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: COLORS[modelKey] }} />
+                          {m.model}
+                        </button>
+                      ) : m.model}
                       {isSelected && (
                         <StatusBadge tone="success" className="ml-2">
                           Primary

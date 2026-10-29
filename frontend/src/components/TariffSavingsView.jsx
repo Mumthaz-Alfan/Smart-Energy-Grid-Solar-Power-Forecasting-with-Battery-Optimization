@@ -67,43 +67,43 @@ export default function TariffSavingsView({
   };
 
   if (loading && !optData) {
-    return <LoadingState label="Calculating tariff savings…" />;
+    return <LoadingState label="Calculating electricity costs & savings…" />;
   }
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="Tariff savings calculator"
-        description="Compare estimated 24-hour electricity cost without a battery to the optimized schedule. Rates are assumed time-of-use prices in $/kWh, not a utility invoice."
+        title="Electricity Cost & Savings"
+        description="Compare estimated electricity costs over 24 hours with and without a battery. These are estimates, not your utility bill."
         actions={
           <SecondaryButton onClick={handleDownloadCsv} disabled={!schedule.length}>
             <Download className="w-4 h-4" />
-            Export schedule CSV
+            Download Schedule
           </SecondaryButton>
         }
       />
 
       <div className="flex items-start gap-2 rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600">
         <Info className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-        Off-peak, shoulder, and peak (17:00–21:00) rates are scenario assumptions used by the existing optimizer.
+        Electricity prices are example values for low-, normal-, and high-price hours. High-price hours are assumed to be 17:00–21:00.
       </div>
 
       {setParams && (
         <section className="surface-card p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-            <h3 className="text-sm font-semibold text-slate-900">Inputs</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Electricity Prices & Battery Storage</h3>
             {onRunOptimization && (
               <PrimaryButton onClick={onRunOptimization} disabled={loading}>
-                {loading ? 'Calculating…' : 'Recalculate savings'}
+                {loading ? 'Calculating…' : 'Calculate Savings'}
               </PrimaryButton>
             )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 text-sm">
             {[
-              { key: 'peak_rate', label: 'Peak tariff', format: (v) => `$${Number(v).toFixed(2)}/kWh`, min: 0.1, max: 0.8, step: 0.01 },
-              { key: 'normal_rate', label: 'Shoulder tariff', format: (v) => `$${Number(v).toFixed(2)}/kWh`, min: 0.05, max: 0.4, step: 0.01 },
-              { key: 'off_peak_rate', label: 'Off-peak tariff', format: (v) => `$${Number(v).toFixed(2)}/kWh`, min: 0.01, max: 0.25, step: 0.01 },
-              { key: 'battery_capacity_mwh', label: 'Battery capacity', format: (v) => `${v} MWh`, min: 1, max: 30, step: 1 },
+              { key: 'peak_rate', label: 'High Electricity Price', format: (v) => `$${Number(v).toFixed(2)}/kWh`, min: 0.1, max: 0.8, step: 0.01 },
+              { key: 'normal_rate', label: 'Normal Electricity Price', format: (v) => `$${Number(v).toFixed(2)}/kWh`, min: 0.05, max: 0.4, step: 0.01 },
+              { key: 'off_peak_rate', label: 'Low Electricity Price', format: (v) => `$${Number(v).toFixed(2)}/kWh`, min: 0.01, max: 0.25, step: 0.01 },
+              { key: 'battery_capacity_mwh', label: 'Battery Storage Capacity', format: (v) => `${v} MWh`, min: 1, max: 30, step: 1 },
             ].map((item) => (
               <label key={item.key} className="block space-y-1">
                 <span className="flex justify-between font-medium text-slate-700">
@@ -129,7 +129,7 @@ export default function TariffSavingsView({
         <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">
           <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
           <p>
-            Estimated net savings are negative (${formatMoney(netSavings)}). The peak-to-off-peak spread does not cover efficiency losses and degradation (${formatMoney(kpis.degradation_wear_cost)}).
+            Estimated savings are negative (${formatMoney(netSavings)}). The difference between high and low electricity prices does not cover energy losses and battery wear (${formatMoney(kpis.degradation_wear_cost)}).
           </p>
         </div>
       )}
@@ -138,38 +138,38 @@ export default function TariffSavingsView({
         <MetricCard
           label="Cost without battery"
           value={kpis.cost_without_bess != null ? `$${formatMoney(kpis.cost_without_bess)}` : '—'}
-          subtitle="Estimated 24-hour grid cost"
+          subtitle="Estimated electricity cost over 24 hours"
           tone="orange"
           badge={{ label: 'Estimated', tone: 'estimated' }}
         />
         <MetricCard
           label="Cost with battery"
           value={kpis.cost_with_bess != null ? `$${formatMoney(kpis.cost_with_bess)}` : '—'}
-          subtitle={`Includes $${formatMoney(kpis.degradation_wear_cost)} degradation`}
+          subtitle={`Includes $${formatMoney(kpis.degradation_wear_cost)} estimated battery wear`}
           tone="navy"
         />
         <MetricCard
-          label="Net estimated savings"
+          label="Estimated Savings"
           value={netSavings != null ? `$${formatMoney(netSavings)}` : '—'}
-          subtitle={kpis.savings_percentage != null ? `${kpis.savings_percentage.toFixed(1)}% cost change` : 'After degradation'}
+          subtitle={kpis.savings_percentage != null ? `${kpis.savings_percentage.toFixed(1)}% change in cost` : 'After battery wear'}
           tone={isNegativeSavings ? 'red' : 'emerald'}
         />
         <MetricCard
-          label="Self-consumption"
+          label="Solar Power Used On Site"
           value={kpis.solar_self_consumption_with_bess_pct != null ? `${kpis.solar_self_consumption_with_bess_pct.toFixed(1)}%` : '—'}
-          subtitle={`From ${kpis.solar_self_consumption_without_bess_pct?.toFixed(1) ?? '—'}% without storage`}
+          subtitle={`Compared with ${kpis.solar_self_consumption_without_bess_pct?.toFixed(1) ?? '—'}% without a battery`}
           tone="amber"
         />
       </div>
 
       <section className="surface-card p-5">
-        <h3 className="text-sm font-semibold text-slate-900">Payback (if the optimizer returned it)</h3>
+        <h3 className="text-sm font-semibold text-slate-900">Estimated Battery Payback</h3>
         <p className="text-xs text-slate-500 mt-1 mb-4">
-          Annual savings assume 365 similar days. This is a scenario, not a validated utility bill.
+          Yearly savings assume each day is similar to this estimate. Actual savings may differ.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Projected annual savings</p>
+            <p className="text-xs text-slate-500">Estimated yearly savings</p>
             <p className="text-xl font-semibold mt-1">
               {financials.annual_savings_projected != null
                 ? `$${Number(financials.annual_savings_projected).toLocaleString()}`
@@ -177,13 +177,13 @@ export default function TariffSavingsView({
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Estimated installed cost</p>
+            <p className="text-xs text-slate-500">Estimated battery installation cost</p>
             <p className="text-xl font-semibold mt-1">
               {financials.estimated_capex != null ? `$${Number(financials.estimated_capex).toLocaleString()}` : '—'}
             </p>
           </div>
           <div className="rounded-xl bg-emerald-50 p-4">
-            <p className="text-xs text-emerald-800">Simple payback</p>
+            <p className="text-xs text-emerald-800">Estimated time to pay back</p>
             <p className="text-xl font-semibold text-emerald-900 mt-1">
               {netSavings > 0 && financials.simple_payback_years != null
                 ? `${Number(financials.simple_payback_years).toFixed(1)} years`
@@ -196,8 +196,8 @@ export default function TariffSavingsView({
       <section className="surface-card p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Hourly schedule</h3>
-            <p className="text-xs text-slate-500">Charge in green, discharge in blue, grid import in orange.</p>
+            <h3 className="text-sm font-semibold text-slate-900">Hourly Electricity & Battery Schedule</h3>
+            <p className="text-xs text-slate-500">See solar power, electricity use, battery charging, and grid electricity for each hour.</p>
           </div>
           <StatusBadge tone="slate">{schedule.length} hours</StatusBadge>
         </div>
@@ -206,15 +206,15 @@ export default function TariffSavingsView({
             <thead className="text-slate-500 border-b border-slate-200">
               <tr>
                 <th className="py-2.5 px-3">Hour</th>
-                <th className="py-2.5 px-3">Tier</th>
-                <th className="py-2.5 px-3">Rate</th>
-                <th className="py-2.5 px-3">Solar (MW)</th>
-                <th className="py-2.5 px-3">Load (MW)</th>
-                <th className="py-2.5 px-3">Charge</th>
-                <th className="py-2.5 px-3">Discharge</th>
-                <th className="py-2.5 px-3">Import without</th>
-                <th className="py-2.5 px-3">Import with</th>
-                <th className="py-2.5 px-3">SoC</th>
+                <th className="py-2.5 px-3">Price period</th>
+                <th className="py-2.5 px-3">Price ($/kWh)</th>
+                <th className="py-2.5 px-3">Solar power (MW)</th>
+                <th className="py-2.5 px-3">Electricity use (MW)</th>
+                <th className="py-2.5 px-3">Battery charging (MW)</th>
+                <th className="py-2.5 px-3">Battery power supplied (MW)</th>
+                <th className="py-2.5 px-3">Grid use without battery (MW)</th>
+                <th className="py-2.5 px-3">Grid use with battery (MW)</th>
+                <th className="py-2.5 px-3">Battery level (%)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-mono">
@@ -225,7 +225,11 @@ export default function TariffSavingsView({
                     <td className="py-2.5 px-3 font-semibold text-slate-900">{row.hour}</td>
                     <td className="py-2.5 px-3">
                       <StatusBadge tone={isPeak ? 'error' : row.tariff_tier === 'Off-Peak' ? 'info' : 'slate'}>
-                        {row.tariff_tier}
+                        {row.tariff_tier === 'Peak'
+                          ? 'High-price hours'
+                          : row.tariff_tier === 'Off-Peak'
+                            ? 'Low-price hours'
+                            : 'Normal-price hours'}
                       </StatusBadge>
                     </td>
                     <td className="py-2.5 px-3">${row.tariff_rate?.toFixed(3)}</td>

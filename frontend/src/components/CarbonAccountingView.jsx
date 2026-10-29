@@ -24,11 +24,15 @@ export default function CarbonAccountingView({ plantId = 1 }) {
   const [error, setError] = useState(null);
 
   const presets = [
-    { label: 'Clean / low-carbon grid', factor: 0.5, desc: 'High hydro / nuclear mix' },
-    { label: 'Official CEA baseline 2024', factor: 0.716, desc: 'National weighted average (CEA v19)' },
-    { label: 'CEA thermal marginal', factor: 0.82, desc: 'Marginal fossil peaker' },
-    { label: 'High-coal grid', factor: 0.95, desc: 'Thermal-heavy regional grid' },
+    { label: 'Cleaner Electricity', factor: 0.5, desc: 'Example of a grid with more hydro or nuclear power' },
+    { label: "India's Average Electricity Emissions", factor: 0.716, desc: 'CEA national average for 2024' },
+    { label: 'Thermal Power Emissions', factor: 0.82, desc: 'Emissions from fossil-fuel power plants' },
+    { label: 'Coal-Heavy Electricity', factor: 0.95, desc: 'Example of a grid with more coal power' },
   ];
+
+  const getFactorLabel = (row) =>
+    presets.find((preset) => Math.abs(preset.factor - row.grid_emission_factor_kg_per_kwh) < 0.005)?.label
+    || row.factor_label;
 
   const fetchCarbonData = (factor) => {
     setLoading(true);
@@ -83,29 +87,31 @@ export default function CarbonAccountingView({ plantId = 1 }) {
   }
 
   const comparisonData = sensitivity.map((row) => ({
-    name: row.factor_label,
+    name: getFactorLabel(row),
     tonnes: Number(row.total_avoided_co2_tonnes),
   }));
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="Carbon impact"
-        description="Estimated operational emissions avoided when solar and battery shifting displace grid electricity. These are estimates, not certified carbon offsets."
+        title="Carbon Emission Savings"
+        description="Estimated CO₂ emissions avoided by using solar power and shifting battery use. These are estimates, not certified carbon offsets."
         actions={<StatusBadge tone="estimated">Estimates only</StatusBadge>}
       />
 
       <div className="flex items-start gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-xs text-emerald-900">
         <Info className="w-4 h-4 shrink-0 mt-0.5" />
         <p>
-          Source: {provenance.source || 'Central Electricity Authority (CEA), Govt of India'}. Default factor{' '}
-          <strong>0.716 kg CO2e / kWh</strong>. Avoided emissions = displaced grid kWh × emission factor. Manufacturing LCA is not included.
+          Electricity pollution level means the emissions linked to each unit of grid electricity. Source:{' '}
+          {provenance.source || 'Central Electricity Authority (CEA), Govt of India'}. The default is{' '}
+          <strong>0.716 kg CO2e / kWh</strong>, India's average electricity emissions for 2024. CO₂ savings are estimates
+          based on electricity displaced by solar and battery use; manufacturing emissions are not included.
         </p>
       </div>
 
       <section className="surface-card p-5">
         <div className="flex items-center justify-between gap-3 mb-4">
-          <h3 className="text-sm font-semibold text-slate-900">Grid emission factor</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Electricity Pollution Level</h3>
           <span className="font-mono text-sm font-semibold text-emerald-800 bg-emerald-50 px-3 py-1 rounded-lg">
             {emissionFactor.toFixed(3)} kg CO2e / kWh
           </span>
@@ -136,7 +142,7 @@ export default function CarbonAccountingView({ plantId = 1 }) {
           value={emissionFactor}
           onChange={(e) => handleFactorChange(parseFloat(e.target.value))}
           className="range-control"
-          aria-label="Grid emission factor"
+          aria-label="Electricity pollution level"
         />
         <div className="flex justify-between text-[11px] text-slate-400 mt-1">
           <span>0.30 kg/kWh</span>
@@ -146,38 +152,41 @@ export default function CarbonAccountingView({ plantId = 1 }) {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <MetricCard
-          label="Estimated avoided emissions"
+          label="CO₂ Emissions Avoided"
           value={dailyAvoidedTonnes != null ? formatNumber(dailyAvoidedTonnes, 2) : '—'}
           unit="t / day"
-          subtitle="Solar self-consumption plus battery shifting"
+          subtitle="Estimated daily savings from solar and battery use"
           icon={Leaf}
           tone="emerald"
           badge={{ label: 'Estimated', tone: 'estimated' }}
         />
         <MetricCard
-          label="Battery shifting avoided"
+          label="Extra CO₂ Saved by Battery"
           value={storageAvoidedTonnes != null ? formatNumber(storageAvoidedTonnes, 2) : '—'}
           unit="t / day"
-          subtitle="Peak-period grid displacement only"
+          subtitle="Estimated additional savings from battery use"
           tone="teal"
         />
         <MetricCard
-          label="Emissions reduction"
+          label="Reduction in CO₂ Emissions"
           value={reductionPct != null ? `${formatNumber(reductionPct, 1)}%` : '—'}
-          subtitle="Relative reduction at the selected factor"
+          subtitle="Compared with grid electricity at the selected pollution level"
           tone="navy"
         />
         <MetricCard
-          label="Annual projection"
+          label="Estimated Yearly CO₂ Savings"
           value={annualAvoidedTonnes != null ? formatNumber(annualAvoidedTonnes, 0) : '—'}
           unit="t"
-          subtitle="365 similar days, not a certified inventory"
+          subtitle="Based on 365 similar days; an estimate, not a certified total"
           tone="amber"
         />
       </div>
 
       {comparisonData.length > 0 && (
-        <ChartCard title="Avoided CO2 by emission-factor regime" description="Each bar is the existing sensitivity result for that grid factor.">
+        <ChartCard
+          title="CO₂ Savings Under Different Electricity Sources"
+          description="Compare estimated CO₂ savings at different electricity pollution levels. Select a level above to update the estimates."
+        >
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={comparisonData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -185,7 +194,7 @@ export default function CarbonAccountingView({ plantId = 1 }) {
                 <XAxis dataKey="name" {...axisProps} />
                 <YAxis {...axisProps} axisLine={false} unit=" t" />
                 <Tooltip contentStyle={tooltipStyle} />
-                <Bar dataKey="tonnes" name="Tonnes CO2e" fill={COLORS.managed} radius={[6, 6, 0, 0]} />
+                <Bar dataKey="tonnes" name="CO₂ avoided (tonnes)" fill={COLORS.managed} radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -194,19 +203,21 @@ export default function CarbonAccountingView({ plantId = 1 }) {
 
       <section className="surface-card overflow-hidden">
         <div className="p-5 border-b border-slate-100">
-          <h3 className="text-sm font-semibold text-slate-900">Sensitivity to the emission factor</h3>
-          <p className="text-xs text-slate-500 mt-0.5">Click a row to apply that factor. Reporting period follows the current optimization day.</p>
+          <h3 className="text-sm font-semibold text-slate-900">Compare Electricity Pollution Levels</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Select a row to see how the estimated savings change. Estimates use the current optimization day.
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="text-xs text-slate-500 border-b border-slate-200">
               <tr>
-                <th className="py-3 px-4">Regime</th>
-                <th className="py-3 px-4">Factor (kg/kWh)</th>
-                <th className="py-3 px-4">Battery avoided (t/day)</th>
-                <th className="py-3 px-4">Total avoided (t/day)</th>
-                <th className="py-3 px-4">Reduction</th>
-                <th className="py-3 px-4">Annual (t)</th>
+                <th className="py-3 px-4">Electricity source</th>
+                <th className="py-3 px-4">Pollution level (kg/kWh)</th>
+                <th className="py-3 px-4">Extra CO₂ saved by battery (t/day)</th>
+                <th className="py-3 px-4">CO₂ emissions avoided (t/day)</th>
+                <th className="py-3 px-4">CO₂ reduction</th>
+                <th className="py-3 px-4">Estimated yearly savings (t)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -218,7 +229,7 @@ export default function CarbonAccountingView({ plantId = 1 }) {
                     onClick={() => handleFactorChange(row.grid_emission_factor_kg_per_kwh)}
                     className={`cursor-pointer ${isSelected ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
                   >
-                    <td className="py-3 px-4 font-medium">{row.factor_label}</td>
+                    <td className="py-3 px-4 font-medium">{getFactorLabel(row)}</td>
                     <td className="py-3 px-4 font-mono">{formatNumber(row.grid_emission_factor_kg_per_kwh, 3)}</td>
                     <td className="py-3 px-4 tabular-nums">{formatNumber(row.storage_avoided_co2_tonnes, 2)}</td>
                     <td className="py-3 px-4 tabular-nums font-semibold">{formatNumber(row.total_avoided_co2_tonnes, 2)}</td>
@@ -235,18 +246,20 @@ export default function CarbonAccountingView({ plantId = 1 }) {
       {weatherCarbon.length > 0 && (
         <section className="surface-card overflow-hidden">
           <div className="p-5 border-b border-slate-100">
-            <h3 className="text-sm font-semibold text-slate-900">Avoided CO2 under weather scenarios</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Benchmark factor 0.716 kg/kWh from the existing carbon API.</p>
+            <h3 className="text-sm font-semibold text-slate-900">CO₂ Savings Under Different Weather Conditions</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Estimates use India's average electricity emissions of 0.716 kg/kWh.
+            </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="text-xs text-slate-500 border-b border-slate-200">
                 <tr>
                   <th className="py-3 px-4">Scenario</th>
-                  <th className="py-3 px-4">Solar (MWh)</th>
-                  <th className="py-3 px-4">Battery avoided (t/day)</th>
-                  <th className="py-3 px-4">Total avoided (t/day)</th>
-                  <th className="py-3 px-4">Annual (t)</th>
+                  <th className="py-3 px-4">Solar power generated (MWh)</th>
+                  <th className="py-3 px-4">Extra CO₂ saved by battery (t/day)</th>
+                  <th className="py-3 px-4">CO₂ emissions avoided (t/day)</th>
+                  <th className="py-3 px-4">Estimated yearly savings (t)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">

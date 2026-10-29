@@ -15,8 +15,8 @@ const TAB_COPY = {
     subtitle: 'Charge, discharge, and state of charge over the next day',
   },
   savings: {
-    title: 'Tariff savings',
-    subtitle: 'Estimated energy cost with and without battery optimization',
+    title: 'Electricity Cost & Savings',
+    subtitle: 'Compare estimated electricity costs with and without a battery',
   },
   data: {
     title: 'Duck curve & data',
@@ -27,8 +27,8 @@ const TAB_COPY = {
     subtitle: 'How generation and battery results change under stress cases',
   },
   carbon: {
-    title: 'Carbon accounting',
-    subtitle: 'Estimated emissions avoided from solar and battery shifting',
+    title: 'Carbon Emission Savings',
+    subtitle: 'Estimated CO₂ emissions avoided through solar and battery use',
   },
   report: {
     title: 'Executive report',

@@ -43,10 +43,10 @@ export default function Sidebar({
     {
       label: 'Analysis',
       items: [
-        { id: 'savings', label: 'Tariff Savings', icon: DollarSign },
+        { id: 'savings', label: 'Electricity Cost & Savings', icon: DollarSign },
         { id: 'data', label: 'Duck Curve & Data', icon: Database },
         { id: 'weather', label: 'Weather Scenarios', icon: CloudRain },
-        { id: 'carbon', label: 'Carbon Impact', icon: Leaf },
+        { id: 'carbon', label: 'Environmental Benefits', icon: Leaf },
       ],
     },
     {

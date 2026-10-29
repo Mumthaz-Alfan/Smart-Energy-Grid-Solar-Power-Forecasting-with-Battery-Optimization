@@ -248,7 +248,7 @@ export default function OverviewView({
               <p className="muted-label !text-emerald-700">Carbon</p>
             </div>
             <p className="mt-1 text-sm text-emerald-900">
-              Open Carbon Impact for estimated avoided emissions. Figures there are operational estimates, not certified offsets.
+              Open Environmental Benefits for estimated CO₂ emissions avoided. Figures are estimates, not certified offsets.
             </p>
           </div>
         </div>

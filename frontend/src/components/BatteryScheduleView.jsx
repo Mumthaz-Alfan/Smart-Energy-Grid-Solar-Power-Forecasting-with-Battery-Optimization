@@ -19,7 +19,7 @@ import ErrorState from './ui/ErrorState';
 import PrimaryButton from './ui/PrimaryButton';
 import LegendItem from './ui/LegendItem';
 import StatusBadge from './ui/StatusBadge';
-import { COLORS, tooltipStyle, axisProps, formatNumber, formatMoney } from './ui/chartTheme';
+import { COLORS, axisProps, formatNumber, formatMoney } from './ui/chartTheme';
 
 export default function BatteryScheduleView({
   optData,
@@ -84,7 +84,7 @@ export default function BatteryScheduleView({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <h3 className="text-sm font-semibold text-slate-900">Battery settings</h3>
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-500">Solar Input:</span>
+            <span className="text-slate-500">Solar generation data:</span>
             <button
               type="button"
               onClick={() => {
@@ -96,7 +96,7 @@ export default function BatteryScheduleView({
                   : 'bg-slate-100 text-slate-700 border-slate-200'
               }`}
             >
-              {params.use_forecast !== false ? 'Upcoming 24h Forecast (Live)' : 'Historical 24h Baseline'}
+              {params.use_forecast !== false ? 'Next 24-hour forecast' : 'Past 24-hour data'}
             </button>
           </div>
         </div>
@@ -104,39 +104,39 @@ export default function BatteryScheduleView({
           {[
             {
               key: 'battery_capacity_mwh',
-              label: 'Capacity',
+              label: 'Battery Capacity',
               value: `${params.battery_capacity_mwh} MWh`,
               min: 1,
               max: 30,
               step: 1,
-              hint: 'Usable energy storage',
+              hint: 'How much energy the battery can store',
             },
             {
               key: 'max_inverter_power_mw',
-              label: 'Charge / discharge power',
+              label: 'Maximum Charge / Discharge Power',
               value: `${params.max_inverter_power_mw} MW`,
               min: 0.5,
               max: 15,
               step: 0.5,
-              hint: 'Peak inverter limit',
+              hint: 'Fastest the battery can charge or discharge',
             },
             {
               key: 'round_trip_efficiency_pct',
-              label: 'Round-trip efficiency',
+              label: 'Battery Efficiency',
               value: `${params.round_trip_efficiency_pct}%`,
               min: 75,
               max: 98,
               step: 0.5,
-              hint: 'AC-to-AC efficiency',
+              hint: 'Energy available after charging and discharging',
             },
             {
               key: 'initial_soc_pct',
-              label: 'Starting state of charge',
+              label: 'Starting Battery Level',
               value: `${params.initial_soc_pct}%`,
               min: 10,
               max: 80,
               step: 5,
-              hint: 'Ending SoC must remain at or above this',
+              hint: 'Battery level to keep at the end of the schedule',
             },
           ].map((item) => (
             <div key={item.key} className="space-y-1.5">
@@ -160,13 +160,16 @@ export default function BatteryScheduleView({
         </div>
 
         <div className="mt-5 pt-5 border-t border-slate-100">
-          <p className="text-xs font-semibold text-slate-700 mb-3">Tariff rates ($/kWh)</p>
+          <p className="text-xs font-semibold text-slate-700">Electricity Rates</p>
+          <p className="text-[11px] text-slate-400 mb-3">
+            Prices for buying electricity or sending it to the grid, in $/kWh.
+          </p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             {[
-              { key: 'off_peak_rate', label: 'Off-peak' },
-              { key: 'normal_rate', label: 'Shoulder' },
-              { key: 'peak_rate', label: 'Peak (17:00–21:00)' },
-              { key: 'export_feedin_rate', label: 'Export feed-in' },
+              { key: 'off_peak_rate', label: 'Low-Cost Electricity' },
+              { key: 'normal_rate', label: 'Normal-Cost Electricity' },
+              { key: 'peak_rate', label: 'High-Cost Electricity (5 PM–9 PM)' },
+              { key: 'export_feedin_rate', label: 'Money Earned from Extra Solar Power' },
             ].map((item) => (
               <label key={item.key} className="block">
                 <span className="block text-xs text-slate-500 mb-1">{item.label}</span>
@@ -307,13 +310,13 @@ export default function BatteryScheduleView({
       </div>
 
       <ChartCard
-        title="24-hour charge, discharge, and SoC"
-        description="Positive green bars charge the battery. Negative blue bars discharge it. Idle hours have no bars."
+        title="Battery Charging & Usage — Next 24 Hours"
+        description="Green bars show when and how fast the battery charges. Blue bars show power supplied from the battery. The purple line shows the battery level; hover over an hour to see how much energy remains."
         legend={
           <div className="flex flex-wrap gap-4">
-            <LegendItem color={COLORS.charge} label="Charging (MW)" />
-            <LegendItem color={COLORS.discharge} label="Discharging (MW)" />
-            <LegendItem color="#7c3aed" label="SoC (%)" />
+            <LegendItem color={COLORS.charge} label="Charging Power (MW)" />
+            <LegendItem color={COLORS.discharge} label="Power Supplied (MW)" />
+            <LegendItem color="#7c3aed" label="Battery Level (%)" />
           </div>
         }
       >
@@ -324,14 +327,39 @@ export default function BatteryScheduleView({
               <XAxis dataKey="hour" {...axisProps} />
               <YAxis yAxisId="left" {...axisProps} axisLine={false} unit=" MW" />
               <YAxis yAxisId="right" orientation="right" {...axisProps} axisLine={false} domain={[0, 100]} unit="%" />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Bar yAxisId="left" dataKey="charge_mw" name="Charging (MW)" fill={COLORS.charge} />
-              <Bar yAxisId="left" dataKey={(d) => -d.discharge_mw} name="Discharging (MW)" fill={COLORS.discharge} />
+              <Tooltip
+                content={({ active, payload }) => {
+                  const row = payload?.[0]?.payload;
+                  if (!active || !row) return null;
+
+                  const isIdle = row.charge_mw <= 0.01 && row.discharge_mw <= 0.01;
+                  return (
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-lg text-xs">
+                      <p className="font-semibold text-slate-900 mb-2">{row.hour}</p>
+                      <p className="text-emerald-700">
+                        Charging Power: {formatNumber(row.charge_mw, 2)} MW
+                      </p>
+                      <p className="text-blue-700">
+                        Power Supplied: {formatNumber(row.discharge_mw, 2)} MW
+                      </p>
+                      <p className="text-violet-700">
+                        Battery Level: {formatNumber(row.battery_soc_pct, 1)}%
+                      </p>
+                      <p className="text-slate-700">
+                        Energy Remaining: {formatNumber(row.battery_energy_mwh, 2)} MWh
+                      </p>
+                      {isIdle && <p className="text-slate-500 mt-1">Battery is idle this hour.</p>}
+                    </div>
+                  );
+                }}
+              />
+              <Bar yAxisId="left" dataKey="charge_mw" name="Charging Power (MW)" fill={COLORS.charge} />
+              <Bar yAxisId="left" dataKey={(d) => -d.discharge_mw} name="Power Supplied (MW)" fill={COLORS.discharge} />
               <Line
                 yAxisId="right"
                 type="monotone"
                 dataKey="battery_soc_pct"
-                name="State of charge (%)"
+                name="Battery Level (%)"
                 stroke="#7c3aed"
                 strokeWidth={2}
                 dot={{ r: 2 }}
@@ -342,13 +370,13 @@ export default function BatteryScheduleView({
       </ChartCard>
 
       <ChartCard
-        title="Grid import with and without the battery"
-        description={`Peak import ${formatNumber((kpis.peak_grid_import_without_bess_kw || 0) / 1000, 2)} MW without storage versus ${formatNumber((kpis.peak_grid_import_with_bess_kw || 0) / 1000, 2)} MW with storage.`}
+        title="Electricity Grid Usage: With vs. Without Battery"
+        description="Compare hourly grid power with and without the battery. Discharging can reduce grid use; charging can temporarily increase it. Solar generation is shown for context. Grid usage is based on modeled demand, not utility meter readings."
         legend={
           <div className="flex flex-wrap gap-4">
-            <LegendItem color={COLORS.solar} label="Solar (MW)" />
-            <LegendItem color={COLORS.gridImport} label="Import without battery" />
-            <LegendItem color={COLORS.managed} label="Import with battery" />
+            <LegendItem color={COLORS.solar} label="Solar Power Generated" />
+            <LegendItem color={COLORS.gridImport} label="Grid Usage Without Battery" />
+            <LegendItem color={COLORS.managed} label="Grid Usage With Battery" />
           </div>
         }
       >
@@ -358,10 +386,50 @@ export default function BatteryScheduleView({
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
               <XAxis dataKey="hour" {...axisProps} />
               <YAxis {...axisProps} axisLine={false} unit=" MW" />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Area type="monotone" dataKey="solar_mw" name="Solar (MW)" fill={COLORS.solarFill} stroke={COLORS.solar} />
-              <Line type="monotone" dataKey="unmanaged_import_mw" name="Import without battery (MW)" stroke={COLORS.gridImport} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="managed_import_mw" name="Import with battery (MW)" stroke={COLORS.managed} strokeWidth={2.2} dot={false} />
+              <Tooltip
+                content={({ active, payload }) => {
+                  const row = payload?.[0]?.payload;
+                  if (!active || !row) return null;
+
+                  return (
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-lg text-xs">
+                      <p className="font-semibold text-slate-900 mb-2">{row.hour}</p>
+                      <p className="text-amber-700">
+                        Solar Power Generated: {formatNumber(row.solar_mw, 2)} MW
+                      </p>
+                      <p className="text-orange-700">
+                        Grid Usage Without Battery: {formatNumber(row.unmanaged_import_mw, 2)} MW
+                      </p>
+                      <p className="text-teal-700">
+                        Grid Usage With Battery: {formatNumber(row.managed_import_mw, 2)} MW
+                      </p>
+                    </div>
+                  );
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="solar_mw"
+                name="Solar Power Generated"
+                fill={COLORS.solarFill}
+                stroke={COLORS.solar}
+              />
+              <Line
+                type="stepAfter"
+                dataKey="unmanaged_import_mw"
+                name="Grid Usage Without Battery"
+                stroke={COLORS.gridImport}
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="stepAfter"
+                dataKey="managed_import_mw"
+                name="Grid Usage With Battery"
+                stroke={COLORS.managed}
+                strokeWidth={2.2}
+                dot={false}
+              />
             </ComposedChart>
           </ResponsiveContainer>
         </div>

@@ -162,7 +162,11 @@ class BatteryOptimizerLP:
             # Default realistic load curve scaled to plant size
             mean_solar = max(100.0, np.mean(P_sol[P_sol > 0])) if np.any(P_sol > 0) else 1000.0
             # Synthetic 24-hour diurnal profile with evening commercial/residential peak
-            hours = np.arange(T) % 24
+            if timestamps is not None:
+                time_index = pd.DatetimeIndex(timestamps)
+                hours = time_index.hour + time_index.minute / 60.0
+            else:
+                hours = np.arange(T) % 24
             base_curve = 0.5 + 0.2 * np.sin((hours - 8) * np.pi / 12) + 0.4 * np.exp(-((hours - 19) ** 2) / 8.0)
             P_load = base_curve * mean_solar * 0.85
         else:

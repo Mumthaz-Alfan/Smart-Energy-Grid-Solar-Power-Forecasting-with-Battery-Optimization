@@ -168,6 +168,23 @@ def test_pulp_battery_optimization():
     assert np.all(schedule["battery_soc_pct"] >= specs.soc_min * 100.0 - 1e-4), "SoC dropped below minimum"
     assert np.all(schedule["battery_soc_pct"] <= specs.soc_max * 100.0 + 1e-4), "SoC exceeded maximum"
 
+    expected_unmanaged_import = np.maximum(load - solar, 0.0)
+    assert np.allclose(
+        schedule["grid_import_unmanaged_kw"],
+        expected_unmanaged_import,
+        atol=0.05,
+    ), "Grid imports without battery must equal demand minus solar generation"
+
+    grid_balance = (
+        schedule["solar_generation_kw"]
+        + schedule["battery_discharge_kw"]
+        + schedule["grid_import_with_bess_kw"]
+        - schedule["load_demand_kw"]
+        - schedule["battery_charge_kw"]
+        - schedule["grid_export_with_bess_kw"]
+    )
+    assert np.allclose(grid_balance, 0.0, atol=0.05), "Hourly grid imports must satisfy the power balance"
+
     # Mutual exclusivity: battery cannot simultaneously charge and discharge
     simultaneous = (schedule["battery_charge_kw"] > 1e-3) & (schedule["battery_discharge_kw"] > 1e-3)
     assert not np.any(simultaneous), "Battery cannot simultaneously charge and discharge"
@@ -176,6 +193,32 @@ def test_pulp_battery_optimization():
     assert kpis["cost_with_bess"] <= kpis["cost_without_bess"], "BESS cost should be <= baseline"
     assert kpis["net_arbitrage_savings"] >= 0.0, "Arbitrage savings should be non-negative in profitable spread"
     print("[OK] PuLP battery optimization passed.")
+
+
+def test_synthetic_demand_uses_forecast_clock_hours():
+    solar = np.full(24, 1000.0)
+    timestamps = pd.date_range("2026-10-29 13:00:00", periods=24, freq="h")
+    optimizer = BatteryOptimizerLP()
+
+    res = optimizer.optimize_dispatch(
+        solar_kw=solar,
+        timestamps=timestamps,
+        dt_hours=1.0,
+    )
+
+    hours = timestamps.hour.to_numpy()
+    expected_load = (
+        0.5
+        + 0.2 * np.sin((hours - 8) * np.pi / 12)
+        + 0.4 * np.exp(-((hours - 19) ** 2) / 8.0)
+    ) * 1000.0 * 0.85
+
+    assert res["solver_status"] == "Optimal"
+    assert np.allclose(
+        res["schedule_df"]["load_demand_kw"],
+        expected_load,
+        atol=0.01,
+    ), "Synthetic demand must follow each forecast timestamp's clock hour"
 
 
 def test_battery_negative_savings_handling():
@@ -212,6 +255,7 @@ if __name__ == "__main__":
     test_xgboost_forecaster()
     test_genuine_24h_ahead_solar_forecast()
     test_pulp_battery_optimization()
+    test_synthetic_demand_uses_forecast_clock_hours()
     test_battery_negative_savings_handling()
     print("=" * 60)
     print("ALL WEEK 2 LP & FORECASTER TESTS PASSED SUCCESSFULLY! [OK]")
